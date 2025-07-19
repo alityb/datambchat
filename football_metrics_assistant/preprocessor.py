@@ -32,17 +32,17 @@ def extract_stats(query: str) -> List[str]:
     
     # Common stat patterns to look for
     stat_patterns = [
-        r'\bposs\+/-?\b',  # Poss+/-
+        r'poss\+/-?',  # Poss+/-
         r'\bxg\b',         # xG
         r'\bxa\b',         # xA
         r'\bnpxg\b',       # npxG
-        r'\bgoals\s*\+\s*assists\b',  # Goals + Assists
-        r'\bexit\s*line\b',  # Exit Line
-        r'\bclean\s*sheets\b',  # Clean sheets
-        r'\bpasses?\s*per\s*90\b',  # Passes per 90
-        r'\bshots?\s*per\s*90\b',   # Shots per 90
-        r'\bassists?\s*per\s*90\b', # Assists per 90
-        r'\bgoals?\s*per\s*90\b',   # Goals per 90
+        r'goals\s*\+\s*assists',  # Goals + Assists
+        r'exit\s*line',  # Exit Line
+        r'clean\s*sheets',  # Clean sheets
+        r'passes?\s*per\s*90',  # Passes per 90
+        r'shots?\s*per\s*90',   # Shots per 90
+        r'assists?\s*per\s*90', # Assists per 90
+        r'goals?\s*per\s*90',   # Goals per 90
     ]
     
     found_stats = []

@@ -112,6 +112,8 @@ def get_alias_to_column_map() -> Dict[str, str]:
             alias_map['poss+/-'] = col
             alias_map['possession+/-'] = col
             alias_map['possplusminus'] = col
+            alias_map['possessionplusminus'] = col
+            alias_map['poss'] = col  # Short alias
         if 'xg' in norm_col:
             alias_map['xg'] = col
         if 'xa' in norm_col:
