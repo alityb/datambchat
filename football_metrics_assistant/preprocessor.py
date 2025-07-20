@@ -1,6 +1,6 @@
 import re
 from typing import Dict, Any, List
-from data_utils import (
+from football_metrics_assistant.data_utils import (
     get_all_teams, get_all_players, get_all_positions, get_all_leagues,
     get_alias_to_column_map, normalize_colname
 )
@@ -128,6 +128,14 @@ def preprocess_query(query: str) -> Dict[str, Any]:
     # 7. Position extraction (using fuzzy matching)
     positions = get_all_positions()
     found_positions = fuzzy_find(query, positions, threshold=0.8)
+    # Add robust mapping for common football position groups
+    lowered_query = query.lower()
+    if 'defender' in lowered_query:
+        found_positions = ['Centre-back', 'Full-back']
+    elif 'midfielder' in lowered_query:
+        found_positions = ['Midfielder', 'Winger']
+    elif 'forward' in lowered_query or 'striker' in lowered_query:
+        found_positions = ['Striker', 'Winger']
     if found_positions:
         result["position"] = found_positions[0] if len(found_positions) == 1 else found_positions
 
@@ -147,13 +155,13 @@ def preprocess_query(query: str) -> Dict[str, Any]:
                 # Clean up the potential league name
                 potential_league = re.sub(r'\b(top|best|players?|by|and|or|the)\b', '', potential_league).strip()
                 if potential_league:
-                    found_leagues = fuzzy_find(potential_league, leagues, threshold=0.6)
+                    found_leagues = fuzzy_find(potential_league, leagues, threshold=0.85)
                     if found_leagues:
                         break
     
     # If no league found with keywords, try the whole query
     if not found_leagues:
-        found_leagues = fuzzy_find(query, leagues, threshold=0.6)
+        found_leagues = fuzzy_find(query, leagues, threshold=0.85)
     
     if found_leagues:
         result["league"] = found_leagues[0] if len(found_leagues) == 1 else found_leagues
