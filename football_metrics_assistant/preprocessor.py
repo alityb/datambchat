@@ -43,6 +43,30 @@ def extract_stats(query: str) -> List[str]:
         r'shots?\s*per\s*90',   # Shots per 90
         r'assists?\s*per\s*90', # Assists per 90
         r'goals?\s*per\s*90',   # Goals per 90
+        # Add defensive stats
+        r'sliding\s*tackles?\s*per\s*90',  # Sliding tackles per 90
+        r'tackles?\s*per\s*90',  # Tackles per 90
+        r'interceptions?\s*per\s*90',  # Interceptions per 90
+        r'clearances?\s*per\s*90',  # Clearances per 90
+        r'blocks?\s*per\s*90',  # Blocks per 90
+        r'aerial\s*duels?\s*per\s*90',  # Aerial duels per 90
+        r'defensive\s*duels?\s*per\s*90',  # Defensive duels per 90
+        r'saves?\s*per\s*90',  # Saves per 90
+        r'crosses?\s*per\s*90',  # Crosses per 90
+        r'dribbles?\s*per\s*90',  # Dribbles per 90
+        r'progressive\s*actions?\s*per\s*90',  # Progressive actions per 90
+        r'progressive\s*passes?\s*per\s*90',  # Progressive passes per 90
+        r'progressive\s*carries?\s*per\s*90',  # Progressive carries per 90
+        # Add percentage stats
+        r'pass\s*completion\s*%',  # Pass completion %
+        r'shot\s*accuracy\s*%',  # Shot accuracy %
+        r'tackle\s*success\s*%',  # Tackle success %
+        r'aerial\s*duel\s*success\s*%',  # Aerial duel success %
+        # Add per 100 stats
+        r'xg\s*per\s*100\s*touches',  # xG per 100 touches
+        r'xa\s*per\s*100\s*passes',  # xA per 100 passes
+        r'goals?\s*per\s*100\s*touches',  # Goals per 100 touches
+        r'assists?\s*per\s*100\s*passes',  # Assists per 100 passes
     ]
     
     found_stats = []
@@ -74,6 +98,26 @@ def extract_stats(query: str) -> List[str]:
             
             if best_match and best_match not in found_stats:
                 found_stats.append(best_match)
+    
+    # Fallback: if no stats found by patterns, try direct alias matching
+    if not found_stats:
+        # Look for any stat name in the query that matches an alias
+        query_words = lowered.split()
+        for word in query_words:
+            # Skip common words that aren't stats
+            skip_words = {'top', 'best', 'players', 'by', 'in', 'from', 'of', 'league', 'under', 'over', 'age', 'defenders', 'midfielders', 'forwards', 'strikers', 'goalkeepers'}
+            if word in skip_words:
+                continue
+            
+            # Try to match with aliases
+            for alias, column in alias_map.items():
+                norm_alias = normalize_colname(alias)
+                norm_word = normalize_colname(word)
+                
+                if norm_word == norm_alias or norm_word in norm_alias or norm_alias in norm_word:
+                    if column not in found_stats:
+                        found_stats.append(column)
+                        break
     
     return found_stats
 
