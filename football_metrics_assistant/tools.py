@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, Any, List, Tuple, Optional
-from data_utils import load_data, get_stat_columns
+from football_metrics_assistant.data_utils import load_data, get_stat_columns
 
 # Set style for better-looking charts
 plt.style.use('default')
@@ -63,6 +63,19 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
     # Filter out players with very few minutes (less than 270 minutes = 3 full games)
     df = df[df['Minutes played'] >= 270]
     applied_filters.append("Minimum 270 minutes played")
+    
+    # Special case: if stat is goalkeeper-specific, filter to goalkeepers
+    stat = preprocessed_hints.get('stat', '').lower() if preprocessed_hints.get('stat') else ''
+    gk_stats = [
+        'clean sheets',
+        'saves per 90',
+        'save percentage %.1',
+        'xg conceded per 90',
+    ]
+    if stat in [s.lower() for s in gk_stats]:
+        if 'Position' in df.columns:
+            df = df[df['Position'] == 'Goalkeeper']
+            applied_filters.append('Position: Goalkeeper (auto for goalkeeper stat)')
     
     return df, applied_filters, original_count
 
@@ -204,7 +217,8 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
             "original_count": original_count,
             "filtered_count": len(df),
             "stat": stat,
-            "top_n": top_n
+            "top_n": top_n,
+            "count": len(df)
         }
         
     except Exception as e:
