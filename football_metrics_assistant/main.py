@@ -1,10 +1,10 @@
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 import requests
-from preprocessor import preprocess_query
-from retriever import HybridRetriever
-from llm_interface import ask_llama
-from tools import analyze_query  # Uncomment this to use real data
+from football_metrics_assistant.preprocessor import preprocess_query
+from football_metrics_assistant.retriever import HybridRetriever
+from football_metrics_assistant.llm_interface import ask_llama
+from football_metrics_assistant.tools import analyze_query  # Uncomment this to use real data
 import time
 
 app = FastAPI()
@@ -96,24 +96,18 @@ def chat(req: ChatRequest):
             table += f"| {i} | {player_name} | {team} | {position} | {stat_value} |\n"
         table += f"\nData based on {data_analysis.get('count', 0)} players matching your criteria."
 
-        # Build a Statmuse-style summary prompt for the LLM
+        # Build a simple Statmuse-style summary in Python
+        top_player = data_analysis['top_players'][0]
+        player_name = top_player['Player']
+        team = top_player['Team within selected timeframe']
         stat = data_analysis.get('stat', 'the requested stat')
-        league = preprocessed.get('league', '')
-        top_players = data_analysis['top_players']
-        statmuse_list = []
-        for i, player in enumerate(top_players, 1):
-            stat_value = player.get(stat, 'N/A')
-            statmuse_list.append(f"{i}. {player['Player']} ({player['Team within selected timeframe']}) - {stat_value} {stat}")
-        statmuse_str = "\n".join(statmuse_list)
-        statmuse_prompt = (
-            f"Summarize the following top {len(top_players)} results in a Statmuse style, e.g., 'Erling Haaland led the Premier League in xG with 28.4.' "
-            f"Be concise and only mention the top performer by name, team, stat, and value.\n"
-            f"Here are the results:\n{statmuse_str}"
-        )
-        statmuse_summary = ask_llama(statmuse_prompt, req.history)
+        stat_value = top_player.get(stat, 'N/A')
+        league = preprocessed.get('league')
+        league_str = f" in {league}" if league else ""
+        summary = f"{player_name} led the{league_str} in {stat} with {stat_value}."
 
         return {
-            "summary": statmuse_summary.strip(),
+            "summary": summary,
             "table": table,
             "preprocessed": preprocessed,
             "retrieval": {
@@ -124,9 +118,9 @@ def chat(req: ChatRequest):
             "data_analysis": data_analysis if data_analysis else None
         }
     else:
-        # For non-data queries, use LLM response
+        # For non-data queries or no results, return a clear message
         return {
-            "summary": llm_response.strip(),
+            "summary": "No players found matching your criteria.",
             "table": None,
             "preprocessed": preprocessed,
             "retrieval": {
