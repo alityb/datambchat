@@ -153,6 +153,23 @@ def get_alias_to_column_map() -> Dict[str, str]:
         if 'exitline' in norm_col:
             alias_map['exit line'] = col
             alias_map['exitline'] = col
+    # Add default mappings for common football stats (if present)
+    default_stat_map = {
+        'tackles': 'Sliding tackles per 90',
+        'assists': 'Assists per 90',
+        'duels': 'Duels per 90',
+        'interceptions': 'Interceptions per 90',
+        'saves': 'Saves per 90',
+        'goals': 'Goals per 90',
+        'shots': 'Shots per 90',
+        'passes': 'Passes per 90',
+        'crosses': 'Crosses per 90',
+        'dribbles': 'Dribbles attempted per 90',
+        'clean sheets': 'Clean sheets',
+    }
+    for user_alias, colname in default_stat_map.items():
+        if colname in stat_cols:
+            alias_map[user_alias] = colname
     return alias_map
 
 @lru_cache(maxsize=1)
