@@ -100,37 +100,59 @@ def normalize_colname(col: str) -> str:
 @lru_cache(maxsize=1)
 def get_alias_to_column_map() -> Dict[str, str]:
     """
-    Returns a mapping from all possible user aliases (normalized) to real column names, including fuzzy/partial matches.
+    Returns a mapping from all possible user aliases (normalized) to real column names, including fuzzy/partial matches and auto-generated forms.
     """
     stat_cols = get_stat_columns()
     alias_map = {}
     for col in stat_cols:
         norm_col = normalize_colname(col)
+        # Add the normalized column name
         alias_map[norm_col] = col
-        # Add common football stat aliases and partials
-        if 'possession+/-' in norm_col or 'possessionplusminus' in norm_col:
-            alias_map['poss+/-'] = col
-            alias_map['possession+/-'] = col
-            alias_map['possplusminus'] = col
-            alias_map['possessionplusminus'] = col
-            alias_map['poss'] = col  # Short alias
+        # Add the original column name (lowercase, stripped)
+        alias_map[col.strip().lower()] = col
+        # Add underscores
+        alias_map[col.strip().lower().replace(' ', '_')] = col
+        # Add no spaces
+        alias_map[col.strip().lower().replace(' ', '')] = col
+        # Add dashes/plus/minus replaced
+        alias_map[col.strip().lower().replace(' ', '').replace('-', '').replace('+', 'plus').replace('/', '').replace('(', '').replace(')', '')] = col
+        # Add per90/per100 abbreviations
+        if 'per 90' in col.lower():
+            base = col.lower().replace('per 90', '').strip().replace(' ', '')
+            alias_map[base + '90'] = col
+            alias_map[base + 'p90'] = col
+            # e.g., assists per 90 -> a90
+            if 'assist' in base:
+                alias_map['a90'] = col
+            if 'goal' in base:
+                alias_map['g90'] = col
+            if 'xg' in base:
+                alias_map['xg90'] = col
+            if 'xa' in base:
+                alias_map['xa90'] = col
+        if 'per 100' in col.lower():
+            base = col.lower().replace('per 100', '').strip().replace(' ', '')
+            alias_map[base + '100'] = col
+            alias_map[base + 'p100'] = col
+        # Add short forms for common stats
         if 'xg' in norm_col:
             alias_map['xg'] = col
         if 'xa' in norm_col:
             alias_map['xa'] = col
-        if 'goalsassists' in norm_col:
-            alias_map['goals+assists'] = col
-            alias_map['goalsassists'] = col
         if 'npxg' in norm_col:
             alias_map['npxg'] = col
+        if 'goalsassists' in norm_col or 'goals+assists' in norm_col:
+            alias_map['goals+assists'] = col
+            alias_map['goalsassists'] = col
+        if 'possession+/-' in norm_col or 'possessionplusminus' in norm_col or 'poss+/-' in norm_col or 'possplusminus' in norm_col:
+            alias_map['poss+/-'] = col
+            alias_map['possession+/-'] = col
+            alias_map['possplusminus'] = col
+            alias_map['possessionplusminus'] = col
+            alias_map['poss'] = col
         if 'exitline' in norm_col:
             alias_map['exit line'] = col
             alias_map['exitline'] = col
-        # Add per90/per100 short aliases
-        if 'per90' in norm_col:
-            alias_map[norm_col.replace('per90', '') + 'p90'] = col
-        if 'per100' in norm_col:
-            alias_map[norm_col.replace('per100', '') + 'p100'] = col
     return alias_map
 
 @lru_cache(maxsize=1)
