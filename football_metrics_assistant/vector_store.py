@@ -2,6 +2,7 @@ import chromadb
 import os
 from typing import List, Dict, Any, Optional
 from chromadb.config import Settings
+from football_metrics_assistant.preprocessor import preprocess_query
 
 class VectorStore:
     def __init__(self, persist_directory: str = "./chroma_db"):
@@ -59,6 +60,30 @@ class VectorStore:
             {
                 "text": "Progressive actions per 90 measures how often a player moves the ball forward significantly (typically 10+ meters towards the opponent's goal). This includes both progressive passes and progressive carries.",
                 "metadata": {"type": "stat_definition", "stat": "Progressive actions", "category": "possession"}
+            },
+            {
+                "text": "Sliding tackles per 90 measures how often a player attempts sliding tackles per 90 minutes. This is a key defensive metric for defenders and defensive midfielders, indicating their aggressive defensive approach and ability to win the ball back.",
+                "metadata": {"type": "stat_definition", "stat": "Sliding tackles per 90", "category": "defensive"}
+            },
+            {
+                "text": "Tackles per 90 measures the total number of tackles a player makes per 90 minutes. This includes both standing and sliding tackles, and is a fundamental defensive metric for evaluating defensive performance.",
+                "metadata": {"type": "stat_definition", "stat": "Tackles per 90", "category": "defensive"}
+            },
+            {
+                "text": "Interceptions per 90 measures how often a player intercepts opposition passes per 90 minutes. This indicates defensive awareness and positioning, as well as the ability to read the game and cut out opposition attacks.",
+                "metadata": {"type": "stat_definition", "stat": "Interceptions per 90", "category": "defensive"}
+            },
+            {
+                "text": "Clearances per 90 measures how often a player clears the ball from defensive areas per 90 minutes. This is particularly important for center-backs and defenders who need to relieve pressure in their own penalty area.",
+                "metadata": {"type": "stat_definition", "stat": "Clearances per 90", "category": "defensive"}
+            },
+            {
+                "text": "Blocks per 90 measures how often a player blocks opposition shots or passes per 90 minutes. This defensive action is crucial for preventing goals and shows a player's commitment to defensive duties.",
+                "metadata": {"type": "stat_definition", "stat": "Blocks per 90", "category": "defensive"}
+            },
+            {
+                "text": "Aerial duels per 90 measures how often a player engages in aerial challenges per 90 minutes. This is particularly important for center-backs and strikers who need to win headers in both defensive and attacking situations.",
+                "metadata": {"type": "stat_definition", "stat": "Aerial duels per 90", "category": "defensive"}
             },
             {
                 "text": "A midfielder is a player who operates in the middle of the field, typically responsible for both attacking and defensive duties. They can be categorized as defensive midfielders, central midfielders, or attacking midfielders based on their primary role.",
