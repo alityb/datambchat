@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, Any, List, Tuple, Optional
-from football_metrics_assistant.data_utils import load_data, get_stat_columns
+from data_utils import load_data, get_stat_columns
 
 # Set style for better-looking charts
 plt.style.use('default')
