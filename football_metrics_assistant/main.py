@@ -85,33 +85,57 @@ def chat(req: ChatRequest):
 
     # 6. Return a clean, conversational answer
     if data_analysis and not data_analysis.get('error') and data_analysis.get('success'):
-        # Return real data directly in table format
-        response = f"Here are the top {len(data_analysis['top_players'])} players by {data_analysis.get('stat', 'the requested stat')}:\n\n"
-        response += "| Rank | Player | Team | Position | Value |\n"
-        response += "|------|--------|------|----------|-------|\n"
-        
+        # Build the markdown table
+        table = f"| Rank | Player | Team | Position | Value |\n"
+        table += "|------|--------|------|----------|-------|\n"
         for i, player in enumerate(data_analysis['top_players'], 1):
             player_name = player['Player']
             team = player['Team within selected timeframe']
             position = player.get('Position', 'N/A')
             stat_value = player.get(data_analysis.get('stat', ''), 'N/A')
-            response += f"| {i} | {player_name} | {team} | {position} | {stat_value} |\n"
-        
-        response += f"\nData based on {data_analysis.get('count', 0)} players matching your criteria."
+            table += f"| {i} | {player_name} | {team} | {position} | {stat_value} |\n"
+        table += f"\nData based on {data_analysis.get('count', 0)} players matching your criteria."
+
+        # Build a Statmuse-style summary prompt for the LLM
+        stat = data_analysis.get('stat', 'the requested stat')
+        league = preprocessed.get('league', '')
+        top_players = data_analysis['top_players']
+        statmuse_list = []
+        for i, player in enumerate(top_players, 1):
+            stat_value = player.get(stat, 'N/A')
+            statmuse_list.append(f"{i}. {player['Player']} ({player['Team within selected timeframe']}) - {stat_value} {stat}")
+        statmuse_str = "\n".join(statmuse_list)
+        statmuse_prompt = (
+            f"Summarize the following top {len(top_players)} results in a Statmuse style, e.g., 'Erling Haaland led the Premier League in xG with 28.4.' "
+            f"Be concise and only mention the top performer by name, team, stat, and value.\n"
+            f"Here are the results:\n{statmuse_str}"
+        )
+        statmuse_summary = ask_llama(statmuse_prompt, req.history)
+
+        return {
+            "summary": statmuse_summary.strip(),
+            "table": table,
+            "preprocessed": preprocessed,
+            "retrieval": {
+                "stat_definitions": len(stat_context),
+                "position_info": len(position_context),
+                "analysis_guides": len(analysis_context)
+            },
+            "data_analysis": data_analysis if data_analysis else None
+        }
     else:
         # For non-data queries, use LLM response
-        response = llm_response
-
-    return {
-        "response": response, 
-        "preprocessed": preprocessed, 
-        "retrieval": {
-            "stat_definitions": len(stat_context),
-            "position_info": len(position_context),
-            "analysis_guides": len(analysis_context)
-        },
-        "data_analysis": data_analysis if data_analysis else None
-    }
+        return {
+            "summary": llm_response.strip(),
+            "table": None,
+            "preprocessed": preprocessed,
+            "retrieval": {
+                "stat_definitions": len(stat_context),
+                "position_info": len(position_context),
+                "analysis_guides": len(analysis_context)
+            },
+            "data_analysis": data_analysis if data_analysis else None
+        }
 
 @app.get("/stat-definitions")
 def stat_definitions():
