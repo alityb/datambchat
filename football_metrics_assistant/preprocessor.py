@@ -1,6 +1,6 @@
 import re
 from typing import Dict, Any, List
-from football_metrics_assistant.data_utils import (
+from data_utils import (
     get_all_teams, get_all_players, get_all_positions, get_all_leagues,
     get_alias_to_column_map, normalize_colname
 )
@@ -133,8 +133,31 @@ def preprocess_query(query: str) -> Dict[str, Any]:
 
     # 8. League extraction (using fuzzy matching)
     leagues = get_all_leagues()
-    found_leagues = fuzzy_find(query, leagues, threshold=0.8)
+    
+    # Look for league keywords in the query
+    league_keywords = ['in', 'from', 'of', 'league', 'premier', 'bundesliga', 'laliga', 'serie', 'ligue', 'eredivisie', 'championship']
+    found_leagues = []
+    
+    for keyword in league_keywords:
+        if keyword in lowered:
+            # Extract the part after the keyword
+            parts = lowered.split(keyword)
+            if len(parts) > 1:
+                potential_league = parts[1].strip()
+                # Clean up the potential league name
+                potential_league = re.sub(r'\b(top|best|players?|by|and|or|the)\b', '', potential_league).strip()
+                if potential_league:
+                    found_leagues = fuzzy_find(potential_league, leagues, threshold=0.6)
+                    if found_leagues:
+                        break
+    
+    # If no league found with keywords, try the whole query
+    if not found_leagues:
+        found_leagues = fuzzy_find(query, leagues, threshold=0.6)
+    
     if found_leagues:
         result["league"] = found_leagues[0] if len(found_leagues) == 1 else found_leagues
+    else:
+        result["league"] = None # Indicate no league found
 
     return result 
