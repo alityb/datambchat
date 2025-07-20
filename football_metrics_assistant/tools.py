@@ -78,7 +78,10 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
     print(f"[DEBUG] After minutes filter: {len(df)} players")
     
     # Special case: if stat is goalkeeper-specific, filter to goalkeepers
-    stat = preprocessed_hints.get('stat', '').lower() if preprocessed_hints.get('stat') else ''
+    stat = preprocessed_hints.get('stat')
+    if isinstance(stat, list):
+        stat = stat[0]
+    stat = stat.lower() if stat else ''
     gk_stats = [
         'clean sheets',
         'saves per 90',
@@ -216,6 +219,11 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                 "applied_filters": applied_filters,
                 "count": len(df)
             }
+        
+        # Handle case where stat is a list
+        if isinstance(stat, list):
+            stat = stat[0]  # Take the first stat if multiple
+        
         print(f"[DEBUG] Stat column: {stat}")
         print(f"[DEBUG] Stat values: {df[stat].head(10).to_list() if stat in df.columns else 'N/A'}")
         
