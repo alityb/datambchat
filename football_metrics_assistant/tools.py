@@ -8,6 +8,8 @@ from football_metrics_assistant.data_utils import load_data, get_stat_columns
 plt.style.use('default')
 sns.set_palette("husl")
 
+print("[DEBUG] filter_players called")
+
 def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
     """
     Filters the DataFrame based on preprocessed hints (team, position, age, league, etc.).
@@ -16,6 +18,7 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
     df = load_data()
     original_count = len(df)
     applied_filters = []
+    print(f"[DEBUG] Initial player count: {len(df)}")
     
     # Apply filters based on preprocessed hints
     if preprocessed_hints.get('team'):
@@ -24,13 +27,19 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
             team = team[0]  # Take first team if multiple
         df = df[df['Team within selected timeframe'] == team]
         applied_filters.append(f"Team: {team}")
+        print(f"[DEBUG] After team filter: {len(df)} players")
     
     if preprocessed_hints.get('position'):
         position = preprocessed_hints['position']
+        print(f"[DEBUG] Position filter value: {position}")
+        print(f"[DEBUG] Unique positions before filter: {df['Position'].unique()}")
         if isinstance(position, list):
-            position = position[0]  # Take first position if multiple
-        df = df[df['Position'] == position]
+            df = df[df['Position'].isin(position)]
+        else:
+            df = df[df['Position'] == position]
+        print(f"[DEBUG] Unique positions after filter: {df['Position'].unique()}")
         applied_filters.append(f"Position: {position}")
+        print(f"[DEBUG] After position filter: {len(df)} players")
     
     if preprocessed_hints.get('league'):
         league = preprocessed_hints['league']
@@ -38,6 +47,7 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
             league = league[0]  # Take first league if multiple
         df = df[df['League'] == league]
         applied_filters.append(f"League: {league}")
+        print(f"[DEBUG] After league filter: {len(df)} players")
     
     if preprocessed_hints.get('age_filter'):
         age_filter = preprocessed_hints['age_filter']
@@ -52,6 +62,7 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
             df = df[df['Age'] == value]
         
         applied_filters.append(f"Age {op} {value}")
+        print(f"[DEBUG] After age filter: {len(df)} players")
     
     if preprocessed_hints.get('player'):
         player = preprocessed_hints['player']
@@ -59,10 +70,12 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
             player = player[0]  # Take first player if multiple
         df = df[df['Player'] == player]
         applied_filters.append(f"Player: {player}")
+        print(f"[DEBUG] After player filter: {len(df)} players")
     
     # Filter out players with very few minutes (less than 270 minutes = 3 full games)
     df = df[df['Minutes played'] >= 270]
     applied_filters.append("Minimum 270 minutes played")
+    print(f"[DEBUG] After minutes filter: {len(df)} players")
     
     # Special case: if stat is goalkeeper-specific, filter to goalkeepers
     stat = preprocessed_hints.get('stat', '').lower() if preprocessed_hints.get('stat') else ''
@@ -76,6 +89,7 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
         if 'Position' in df.columns:
             df = df[df['Position'] == 'Goalkeeper']
             applied_filters.append('Position: Goalkeeper (auto for goalkeeper stat)')
+            print(f"[DEBUG] After auto-goalkeeper filter: {len(df)} players")
     
     return df, applied_filters, original_count
 
@@ -86,6 +100,12 @@ def sort_and_limit(df: pd.DataFrame, stat: str, top_n: int = 5) -> pd.DataFrame:
     if stat not in df.columns:
         raise ValueError(f"Stat '{stat}' not found in data. Available stats: {list(df.columns)}")
     
+    if not pd.api.types.is_numeric_dtype(df[stat]):
+        raise ValueError(f"Stat '{stat}' is not numeric. Column dtype: {df[stat].dtype}")
+    
+    if df[stat].dropna().empty:
+        raise ValueError(f"Stat '{stat}' has no valid (non-NaN) values for the filtered players.")
+
     # Sort by the stat (descending for most stats, ascending for some)
     ascending_stats = ['Age', 'Minutes played', 'Matches played']  # Lower is better
     ascending = stat in ascending_stats
@@ -178,6 +198,7 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
     try:
         # Filter players
         df, applied_filters, original_count = filter_players(preprocessed_hints)
+        print(f"[DEBUG] After all filters: {len(df)} players")
         
         if df.empty:
             return {
@@ -195,22 +216,35 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                 "applied_filters": applied_filters,
                 "count": len(df)
             }
+        print(f"[DEBUG] Stat column: {stat}")
+        print(f"[DEBUG] Stat values: {df[stat].head(10).to_list() if stat in df.columns else 'N/A'}")
         
         # Get top N
         top_n = preprocessed_hints.get('top_n', 5)
         
         # Sort and get top players
-        top_players = sort_and_limit(df, stat, top_n)
+        try:
+            top_players_df = sort_and_limit(df, stat, top_n)
+        except Exception as e:
+            return {
+                "error": f"Stat error: {str(e)}",
+                "applied_filters": applied_filters,
+                "count": len(df)
+            }
         
         # Generate chart
         fig, chart_description = generate_chart(df, stat, top_n)
         
         # Get summary
         summary = get_player_summary(df, stat)
-        
+        # Convert all summary values to Python types
+        summary = {k: to_python_type(v) for k, v in summary.items()}
         return {
             "success": True,
-            "top_players": top_players[['Player', 'Team within selected timeframe', 'Position', 'Age', stat]].to_dict('records'),
+            "top_players": [
+                {k: to_python_type(v) for k, v in player.items()}
+                for player in top_players_df.to_dict('records')
+            ],
             "summary": summary,
             "chart_description": chart_description,
             "applied_filters": applied_filters,
@@ -222,7 +256,17 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
         }
         
     except Exception as e:
+        print(f"[DEBUG] Analysis failed: {str(e)}")
         return {
             "error": f"Analysis failed: {str(e)}",
             "preprocessed_hints": preprocessed_hints
         } 
+
+def to_python_type(val):
+    import numpy as np
+    if isinstance(val, np.generic):
+        val = val.item()
+    if isinstance(val, float):
+        if np.isnan(val) or np.isinf(val):
+            return None
+    return val 
