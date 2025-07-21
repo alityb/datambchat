@@ -35,12 +35,21 @@ def chat(req: ChatRequest):
 
     # 3. Use tools for real data filtering/sorting
     data_analysis = None
-    if preprocessed.get('stat') and (preprocessed.get('top_n') or preprocessed.get('team') or preprocessed.get('position') or preprocessed.get('league')):
+    # Always analyze if there are any filters or if it's a COUNT/LIST query
+    if (
+        preprocessed.get('stat')
+        or preprocessed.get('query_type', '').startswith('COUNT')
+        or preprocessed.get('query_type', '').startswith('LIST')
+        or preprocessed.get('top_n')
+        or preprocessed.get('team')
+        or preprocessed.get('position')
+        or preprocessed.get('league')
+        or preprocessed.get('age_filter')
+    ):
         try:
             data_analysis = analyze_query(preprocessed)
         except Exception as e:
             data_analysis = {"error": f"Data analysis failed: {str(e)}"}
-
     # 4. Compose context for LLM
     context_parts = []
     
