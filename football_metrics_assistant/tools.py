@@ -244,58 +244,82 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                 "original_count": original_count
             }
         
-        # Get stat for analysis
-        stat = preprocessed_hints.get('stat')
-        if not stat:
+        query_type = preprocessed_hints.get('query_type', 'TOP_N')
+
+        if query_type == 'COUNT' or query_type == 'FILTER':
+            # Always include filtered_data for table rendering
+            stat = preprocessed_hints.get('stat')
+            filtered_data = df[['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']]
+            if stat and stat in df.columns:
+                filtered_data = filtered_data.copy()
+                filtered_data[stat] = df[stat]
             return {
-                "error": "No stat specified for analysis",
-                "filtered_data": df[['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']].head(10).to_dict('records'),
+                "success": True,
+                "count": len(df),
+                "summary": f"There are {len(df)} players matching your criteria.",
+                "filtered_data": filtered_data.to_dict('records'),
+                "applied_filters": applied_filters
+            }
+        elif query_type == 'LIST':
+            return {
+                "success": True,
+                "players": df[['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']].to_dict('records'),
+                "count": len(df),
+                "applied_filters": applied_filters
+            }
+        elif query_type in ('TOP_N', 'FILTER'):
+            # Get stat for analysis
+            stat = preprocessed_hints.get('stat')
+            if not stat:
+                return {
+                    "error": "No stat specified for analysis",
+                    "filtered_data": df[['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']].head(10).to_dict('records'),
+                    "applied_filters": applied_filters,
+                    "count": len(df)
+                }
+            # Handle case where stat is a list
+            if isinstance(stat, list):
+                stat = stat[0]  # Take the first stat if multiple
+            print(f"[DEBUG] Stat column: {stat}")
+            print(f"[DEBUG] Stat values: {df[stat].head(10).to_list() if stat in df.columns else 'N/A'}")
+            # Get top N
+            top_n = preprocessed_hints.get('top_n', 5)
+            # Sort and get top players
+            try:
+                top_players_df = sort_and_limit(df, stat, top_n)
+            except Exception as e:
+                return {
+                    "error": f"Stat error: {str(e)}",
+                    "applied_filters": applied_filters,
+                    "count": len(df)
+                }
+            # Generate chart
+            fig, chart_description = generate_chart(df, stat, top_n)
+            # Get summary
+            summary = get_player_summary(df, stat)
+            # Convert all summary values to Python types
+            summary = {k: to_python_type(v) for k, v in summary.items()}
+            return {
+                "success": True,
+                "top_players": [
+                    {k: to_python_type(v) for k, v in player.items()}
+                    for player in top_players_df.to_dict('records')
+                ],
+                "summary": summary,
+                "chart_description": chart_description,
+                "applied_filters": applied_filters,
+                "original_count": original_count,
+                "filtered_count": len(df),
+                "stat": stat,
+                "top_n": top_n,
+                "count": len(df)
+            }
+        else:
+            return {
+                "error": "Sorry, I couldn't understand the type of question. Please rephrase.",
                 "applied_filters": applied_filters,
                 "count": len(df)
             }
-        
-        # Handle case where stat is a list
-        if isinstance(stat, list):
-            stat = stat[0]  # Take the first stat if multiple
-        
-        print(f"[DEBUG] Stat column: {stat}")
-        print(f"[DEBUG] Stat values: {df[stat].head(10).to_list() if stat in df.columns else 'N/A'}")
-        
-        # Get top N
-        top_n = preprocessed_hints.get('top_n', 5)
-        
-        # Sort and get top players
-        try:
-            top_players_df = sort_and_limit(df, stat, top_n)
-        except Exception as e:
-            return {
-                "error": f"Stat error: {str(e)}",
-                "applied_filters": applied_filters,
-                "count": len(df)
-            }
-        
-        # Generate chart
-        fig, chart_description = generate_chart(df, stat, top_n)
-        
-        # Get summary
-        summary = get_player_summary(df, stat)
-        # Convert all summary values to Python types
-        summary = {k: to_python_type(v) for k, v in summary.items()}
-        return {
-            "success": True,
-            "top_players": [
-                {k: to_python_type(v) for k, v in player.items()}
-                for player in top_players_df.to_dict('records')
-            ],
-            "summary": summary,
-            "chart_description": chart_description,
-            "applied_filters": applied_filters,
-            "original_count": original_count,
-            "filtered_count": len(df),
-            "stat": stat,
-            "top_n": top_n,
-            "count": len(df)
-        }
         
     except Exception as e:
         print(f"[DEBUG] Analysis failed: {str(e)}")
