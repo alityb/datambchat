@@ -73,59 +73,75 @@ def chat(req: ChatRequest):
     context_parts.append(f"Query Analysis: {preprocessed}")
     
     # Add real data analysis if available
-    if data_analysis and not data_analysis.get('error'):
-        if data_analysis.get('success') and data_analysis.get('top_players'):
-            context_parts.append("Real Data Results:")
-            context_parts.append(f"Top {len(data_analysis['top_players'])} players found:")
-            for i, player in enumerate(data_analysis['top_players'][:5], 1):  # Limit to top 5
-                context_parts.append(f"{i}. {player['Player']} ({player['Team within selected timeframe']}) - {player.get('Position', 'N/A')} - {player.get(data_analysis.get('stat', ''), 'N/A')}")
-        elif data_analysis.get('filtered_data'):
-            context_parts.append("Filtered Data:")
-            for player in data_analysis['filtered_data'][:3]:  # Limit to 3
-                context_parts.append(f"- {player['Player']} ({player['Team within selected timeframe']}) - {player.get('Position', 'N/A')}")
-    
-    context = "\n\n".join(context_parts)
-
-    # 5. Send everything to Llama 3 (Ollama)
-    llm_start = time.time()
-    llm_prompt = f"User query: {req.message}\n\nContext:\n{context}"
-    llm_response = ask_llama(llm_prompt, req.history)
-    llm_time = time.time() - llm_start
-
-    # 6. Return a clean, conversational answer
     if data_analysis and not data_analysis.get('error') and data_analysis.get('success'):
-        # Build the markdown table
-        table = f"| Rank | Player | Team | Position | Value |\n"
-        table += "|------|--------|------|----------|-------|\n"
-        for i, player in enumerate(data_analysis['top_players'], 1):
-            player_name = player['Player']
-            team = player['Team within selected timeframe']
-            position = player.get('Position', 'N/A')
-            stat_value = player.get(data_analysis.get('stat', ''), 'N/A')
-            table += f"| {i} | {player_name} | {team} | {position} | {stat_value} |\n"
-        table += f"\nData based on {data_analysis.get('count', 0)} players matching your criteria."
+        if data_analysis.get('top_players') and preprocessed.get('query_type') in ('TOP_N',):
+            # Build the markdown table for TOP_N
+            table = f"| Rank | Player | Team | Position | Value |\n"
+            table += "|------|--------|------|----------|-------|\n"
+            for i, player in enumerate(data_analysis['top_players'], 1):
+                player_name = player['Player']
+                team = player['Team within selected timeframe']
+                position = player.get('Position', 'N/A')
+                stat_value = player.get(data_analysis.get('stat', ''), 'N/A')
+                table += f"| {i} | {player_name} | {team} | {position} | {stat_value} |\n"
+            table += f"\nData based on {data_analysis.get('count', 0)} players matching your criteria."
 
-        # Build a simple Statmuse-style summary in Python
-        top_player = data_analysis['top_players'][0]
-        player_name = top_player['Player']
-        team = top_player['Team within selected timeframe']
-        stat = data_analysis.get('stat', 'the requested stat')
-        stat_value = top_player.get(stat, 'N/A')
-        league = preprocessed.get('league')
-        league_str = f" in {league}" if league else ""
-        summary = f"{player_name} led the{league_str} in {stat} with {stat_value}."
+            # Build a simple Statmuse-style summary in Python
+            top_player = data_analysis['top_players'][0]
+            player_name = top_player['Player']
+            team = top_player['Team within selected timeframe']
+            stat = data_analysis.get('stat', 'the requested stat')
+            stat_value = top_player.get(stat, 'N/A')
+            league = preprocessed.get('league')
+            league_str = f" in {league}" if league else ""
+            summary = f"{player_name} led the{league_str} in {stat} with {stat_value}."
 
-        return {
-            "summary": summary,
-            "table": table,
-            "preprocessed": preprocessed,
-            "retrieval": {
-                "stat_definitions": len(stat_context),
-                "position_info": len(position_context),
-                "analysis_guides": len(analysis_context)
-            },
-            "data_analysis": data_analysis if data_analysis else None
-        }
+            return {
+                "summary": summary,
+                "table": table,
+                "preprocessed": preprocessed,
+                "retrieval": {
+                    "stat_definitions": len(stat_context),
+                    "position_info": len(position_context),
+                    "analysis_guides": len(analysis_context)
+                },
+                "data_analysis": data_analysis if data_analysis else None
+            }
+        elif data_analysis.get('count') is not None:
+            # COUNT or FILTER query with stat value filter: show all matching players in a table
+            league = preprocessed.get('league', '')
+            stat = preprocessed.get('stat', '')
+            value = preprocessed.get('stat_value')
+            op = preprocessed.get('stat_op')
+            op_str = {
+                '>=': 'at least',
+                '>': 'more than',
+                '<=': 'at most',
+                '<': 'less than',
+                '==': 'exactly'
+            }.get(op, op)
+            summary = f"There are {data_analysis['count']} players in {league} with {op_str} {value} {stat}."
+            # Build the table of all matching players
+            table = f"| Rank | Player | Team | Position | Value |\n"
+            table += "|------|--------|------|----------|-------|\n"
+            for i, player in enumerate(data_analysis.get('filtered_data', []), 1):
+                player_name = player['Player']
+                team = player['Team within selected timeframe']
+                position = player.get('Position', 'N/A')
+                stat_value = player.get(stat, 'N/A')
+                table += f"| {i} | {player_name} | {team} | {position} | {stat_value} |\n"
+            table += f"\nData based on {data_analysis.get('count', 0)} players matching your criteria."
+            return {
+                "summary": summary,
+                "table": table,
+                "preprocessed": preprocessed,
+                "retrieval": {
+                    "stat_definitions": len(stat_context),
+                    "position_info": len(position_context),
+                    "analysis_guides": len(analysis_context)
+                },
+                "data_analysis": data_analysis
+            }
     else:
         # For non-data queries or no results, return a clear message
         return {
