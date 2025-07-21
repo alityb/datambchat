@@ -247,5 +247,26 @@ def preprocess_query(query: str) -> Dict[str, Any]:
     else:
         result["league"] = None
 
+    # Stat value filter extraction
+    stat_value_filter = extract_stat_value_filter(query)
+    if stat_value_filter:
+        # Use stat aliasing for the stat phrase
+        stat_aliases = get_alias_to_column_map()
+        stat_phrase = stat_value_filter["stat"]
+        # Fuzzy match stat phrase to column
+        from difflib import get_close_matches
+        all_aliases = list(stat_aliases.keys())
+        match = get_close_matches(stat_phrase, all_aliases, n=1, cutoff=0.6)
+        if match:
+            stat_col = stat_aliases[match[0]]
+            result["stat"] = stat_col
+            result["stat_op"] = stat_value_filter["stat_op"]
+            result["stat_value"] = stat_value_filter["stat_value"]
+        else:
+            # If no match, just use the phrase
+            result["stat"] = stat_phrase
+            result["stat_op"] = stat_value_filter["stat_op"]
+            result["stat_value"] = stat_value_filter["stat_value"]
+
     print(f"[DEBUG] Preprocessed query result: {result}")
     return result 
