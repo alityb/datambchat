@@ -4,6 +4,66 @@ from football_metrics_assistant.data_utils import (
     get_all_teams, get_all_players, get_all_positions, get_all_leagues,
     get_alias_to_column_map, normalize_colname
 )
+from spellchecker import SpellChecker
+import phonetics
+
+LEAGUE_PRIORITY = [
+    "Premier League",
+    "La Liga",
+    "Bundesliga",
+    "Serie A",
+    "Ligue 1",
+    "Eredivisie",
+    "Championship",
+    "Brazil Serie A",
+    "Serie B",
+    # ...add more as needed
+]
+
+def correction_dict():
+    # Add more as you see common typos
+    return {
+        'serei a': 'Serie A',
+        'premier legaue': 'Premier League',
+        'ligue 1': 'Ligue 1',
+        'bundesliga': 'Bundesliga',
+        'laliga': 'La Liga',
+        'champions leage': 'Champions League',
+        'clean sheats': 'Clean sheets',
+        'assits': 'Assists per 90',
+        'goals+assists': 'Goals + Assists per 90',
+        # ...add more as needed
+    }
+
+def robust_correction(phrase: str, candidates: List[str]) -> str:
+    corrections = correction_dict()
+    norm_phrase = phrase.lower().strip()
+    print(f"[DEBUG] Robust correction input: '{phrase}' (normalized: '{norm_phrase}')")
+    # 1. Correction dict (substring match)
+    for typo, correct in corrections.items():
+        if typo in norm_phrase:
+            print(f"[DEBUG] Correction dict: '{norm_phrase}' contains '{typo}' -> '{correct}'")
+            return correct
+    # 2. Spellchecker
+    spell = SpellChecker()
+    corrected = ' '.join([spell.correction(w) for w in norm_phrase.split()])
+    if corrected != norm_phrase:
+        print(f"[DEBUG] Spellchecker: '{norm_phrase}' -> '{corrected}'")
+        norm_phrase = corrected
+    # 3. Phonetic matching
+    input_phon = phonetics.metaphone(norm_phrase)
+    for cand in candidates:
+        if phonetics.metaphone(cand.lower()) == input_phon:
+            print(f"[DEBUG] Phonetic match: '{norm_phrase}' -> '{cand}'")
+            return cand
+    # 4. Fuzzy matching
+    from difflib import get_close_matches
+    match = get_close_matches(norm_phrase, candidates, n=1, cutoff=0.6)
+    if match:
+        print(f"[DEBUG] Fuzzy match: '{norm_phrase}' -> '{match[0]}'")
+        return match[0]
+    print(f"[DEBUG] No robust match found for '{phrase}', returning as is.")
+    return phrase
 
 def fuzzy_find(query: str, candidates: List[str], threshold: float = 0.8) -> List[str]:
     """
