@@ -6,6 +6,7 @@ from football_metrics_assistant.data_utils import (
 )
 from spellchecker import SpellChecker
 import phonetics
+from football_metrics_assistant.llm_interface import classify_query_type
 
 LEAGUE_PRIORITY = [
     "Premier League",
@@ -46,7 +47,7 @@ def robust_correction(phrase: str, candidates: List[str]) -> str:
             return correct
     # 2. Spellchecker
     spell = SpellChecker()
-    corrected = ' '.join([spell.correction(w) for w in norm_phrase.split()])
+    corrected = ' '.join([spell.correction(w) or w for w in norm_phrase.split()])
     if corrected != norm_phrase:
         print(f"[DEBUG] Spellchecker: '{norm_phrase}' -> '{corrected}'")
         norm_phrase = corrected
