@@ -117,6 +117,39 @@ def extract_stats(query: str) -> List[str]:
     print(f"[DEBUG] No stat match found for phrase '{corrected_stat}'")
     return []
 
+def extract_stat_value_filter(query: str):
+    # Pattern: 'at least' or 'atleast'
+    match = re.search(r"at ?least ([0-9.]+) ([\w\s+/-]+)", query.lower())
+    if match:
+        value = float(match.group(1))
+        stat_phrase = match.group(2).strip()
+        return {"stat": stat_phrase, "stat_op": ">=", "stat_value": value}
+    # Pattern: 'more than 10 assists'
+    match = re.search(r"more than ([0-9.]+) ([\w\s+/-]+)", query.lower())
+    if match:
+        value = float(match.group(1))
+        stat_phrase = match.group(2).strip()
+        return {"stat": stat_phrase, "stat_op": ">", "stat_value": value}
+    # Pattern: 'less than 5 clean sheets'
+    match = re.search(r"less than ([0-9.]+) ([\w\s+/-]+)", query.lower())
+    if match:
+        value = float(match.group(1))
+        stat_phrase = match.group(2).strip()
+        return {"stat": stat_phrase, "stat_op": "<", "stat_value": value}
+    # Pattern: 'at most' or 'atmost'
+    match = re.search(r"at ?most ([0-9.]+) ([\w\s+/-]+)", query.lower())
+    if match:
+        value = float(match.group(1))
+        stat_phrase = match.group(2).strip()
+        return {"stat": stat_phrase, "stat_op": "<=", "stat_value": value}
+    # Pattern: 'exactly 2 goals'
+    match = re.search(r"exactly ([0-9.]+) ([\w\s+/-]+)", query.lower())
+    if match:
+        value = float(match.group(1))
+        stat_phrase = match.group(2).strip()
+        return {"stat": stat_phrase, "stat_op": "==", "stat_value": value}
+    return None
+
 def prioritize_leagues(matched_leagues):
     priority = {name: i for i, name in enumerate(LEAGUE_PRIORITY)}
     return sorted(
@@ -127,6 +160,11 @@ def prioritize_leagues(matched_leagues):
 def preprocess_query(query: str) -> Dict[str, Any]:
     result = {"original": query}
     lowered = query.lower()
+
+    # LLM-powered query type classification
+    query_type = classify_query_type(query)
+    query_type = query_type.strip().replace(':', '').upper()
+    result["query_type"] = query_type
 
     # 1. Top N / Best N
     top_match = re.search(r"(?:top|best)\s*(\d+)", lowered)
@@ -151,10 +189,11 @@ def preprocess_query(query: str) -> Dict[str, Any]:
     if season_match:
         result["season"] = season_match.group(1)
 
-    # 4. Stat/metric extraction (improved precision)
-    found_stats = extract_stats(query)
-    if found_stats:
-        result["stat"] = found_stats[0] if len(found_stats) == 1 else found_stats
+    # 4. Stat/metric extraction (only for TOP_N or FILTER)
+    if query_type in ("TOP_N", "FILTER"):
+        found_stats = extract_stats(query)
+        if found_stats:
+            result["stat"] = found_stats[0] if len(found_stats) == 1 else found_stats
 
     # 5. Team extraction (using fuzzy matching)
     teams = get_all_teams()
