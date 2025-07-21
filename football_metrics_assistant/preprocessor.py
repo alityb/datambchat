@@ -97,104 +97,33 @@ def extract_stat_phrase(query: str) -> str:
 
 def extract_stats(query: str) -> List[str]:
     alias_map = get_alias_to_column_map()
-    lowered = query.lower()
-    
-    # Common stat patterns to look for
-    stat_patterns = [
-        r'poss\+/-?',  # Poss+/-
-        r'\bxg\b',         # xG
-        r'\bxa\b',         # xA
-        r'\bnpxg\b',       # npxG
-        r'goals\s*\+\s*assists',  # Goals + Assists
-        r'exit\s*line',  # Exit Line
-        r'clean\s*sheets',  # Clean sheets
-        r'passes?\s*per\s*90',  # Passes per 90
-        r'shots?\s*per\s*90',   # Shots per 90
-        r'assists?\s*per\s*90', # Assists per 90
-        r'goals?\s*per\s*90',   # Goals per 90
-        # Add defensive stats
-        r'sliding\s*tackles?\s*per\s*90',  # Sliding tackles per 90
-        r'tackles?\s*per\s*90',  # Tackles per 90
-        r'interceptions?\s*per\s*90',  # Interceptions per 90
-        r'clearances?\s*per\s*90',  # Clearances per 90
-        r'blocks?\s*per\s*90',  # Blocks per 90
-        r'aerial\s*duels?\s*per\s*90',  # Aerial duels per 90
-        r'defensive\s*duels?\s*per\s*90',  # Defensive duels per 90
-        r'saves?\s*per\s*90',  # Saves per 90
-        r'crosses?\s*per\s*90',  # Crosses per 90
-        r'dribbles?\s*per\s*90',  # Dribbles per 90
-        r'progressive\s*actions?\s*per\s*90',  # Progressive actions per 90
-        r'progressive\s*passes?\s*per\s*90',  # Progressive passes per 90
-        r'progressive\s*carries?\s*per\s*90',  # Progressive carries per 90
-        # Add percentage stats
-        r'pass\s*completion\s*%',  # Pass completion %
-        r'shot\s*accuracy\s*%',  # Shot accuracy %
-        r'tackle\s*success\s*%',  # Tackle success %
-        r'aerial\s*duel\s*success\s*%',  # Aerial duel success %
-        # Add per 100 stats
-        r'xg\s*per\s*100\s*touches',  # xG per 100 touches
-        r'xa\s*per\s*100\s*passes',  # xA per 100 passes
-        r'goals?\s*per\s*100\s*touches',  # Goals per 100 touches
-        r'assists?\s*per\s*100\s*passes',  # Assists per 100 passes
-    ]
-    
-    found_stats = []
-    for pattern in stat_patterns:
-        matches = re.findall(pattern, lowered)
-        for match in matches:
-            # Try to find the best matching column
-            best_match = None
-            best_score = 0
-            
-            for alias, column in alias_map.items():
-                norm_alias = normalize_colname(alias)
-                norm_match = normalize_colname(match)
-                
-                # Exact match gets highest score
-                if norm_match == norm_alias:
-                    score = 1.0
-                # Substring match gets medium score
-                elif norm_match in norm_alias or norm_alias in norm_match:
-                    score = 0.8
-                # Fuzzy match gets lower score
-                else:
-                    import difflib
-                    score = difflib.SequenceMatcher(None, norm_match, norm_alias).ratio()
-                
-                if score > best_score and score > 0.7:  # Stricter threshold
-                    best_score = score
-                    best_match = column
-            
-            if best_match and best_match not in found_stats:
-                found_stats.append(best_match)
-    
-    # Fallback: if no stats found by patterns, try direct alias matching
-    if not found_stats:
-        # Look for any stat name in the query that matches an alias
-        query_words = lowered.split()
-        for word in query_words:
-            # Skip common words that aren't stats
-            skip_words = {'top', 'best', 'players', 'by', 'in', 'from', 'of', 'league', 'under', 'over', 'age', 'defenders', 'midfielders', 'forwards', 'strikers', 'goalkeepers'}
-            if word in skip_words:
-                continue
-            
-            # Try to match with aliases
-            for alias, column in alias_map.items():
-                norm_alias = normalize_colname(alias)
-                norm_word = normalize_colname(word)
-                
-                if norm_word == norm_alias or norm_word in norm_alias or norm_alias in norm_word:
-                    if column not in found_stats:
-                        found_stats.append(column)
-                        break
-    
-    return found_stats
+    stat_phrase = extract_stat_phrase(query)
+    # Robust correction pipeline for stat phrase
+    all_aliases = list(alias_map.keys())
+    corrected_stat = robust_correction(stat_phrase, all_aliases)
+    from difflib import get_close_matches
+    matches = get_close_matches(corrected_stat, all_aliases, n=3, cutoff=0.6)
+    print(f"[DEBUG] Fuzzy stat matches for phrase '{corrected_stat}': {matches}")
+    if matches:
+        chosen_stats = [alias_map[m] for m in matches]
+        print(f"[DEBUG] Chosen stat columns from fuzzy matches: {chosen_stats}")
+        return chosen_stats
+    # Fallback: try default mapping for generic terms
+    for alias, col in alias_map.items():
+        if alias in corrected_stat:
+            print(f"[DEBUG] Fallback: matched alias '{alias}' in stat phrase '{corrected_stat}' to column '{col}'")
+            return [col]
+    print(f"[DEBUG] No stat match found for phrase '{corrected_stat}'")
+    return []
+
+def prioritize_leagues(matched_leagues):
+    priority = {name: i for i, name in enumerate(LEAGUE_PRIORITY)}
+    return sorted(
+        matched_leagues,
+        key=lambda x: priority.get(x, len(priority))
+    )
 
 def preprocess_query(query: str) -> Dict[str, Any]:
-    """
-    Preprocesses the user query to extract structured hints for downstream logic.
-    Uses real data for teams, players, positions, leagues, and stat aliases.
-    """
     result = {"original": query}
     lowered = query.lower()
 
