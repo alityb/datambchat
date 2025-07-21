@@ -100,8 +100,34 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
         if 'Position' in df.columns:
             df = df[df['Position'] == 'Goalkeeper']
             applied_filters.append('Position: Goalkeeper (auto for goalkeeper stat)')
-            print(f"[DEBUG] After auto-goalkeeper filter: {len(df)} players")
-    
+            print(f"[DEBUG] After auto-goalkeeper filter: {len(df)} players, shape: {df.shape}")
+            if df.empty:
+                print("[DEBUG] DataFrame is EMPTY after auto-goalkeeper filter!")
+    # Stat value filter (e.g., Goals per 90 >= 0.5)
+    if preprocessed_hints.get('stat') and preprocessed_hints.get('stat_value') is not None:
+        stat = preprocessed_hints['stat']
+        op = preprocessed_hints.get('stat_op', '>=')
+        value = preprocessed_hints['stat_value']
+        if stat in df.columns:
+            if op == '>=':
+                df = df[df[stat] >= value]
+            elif op == '>':
+                df = df[df[stat] > value]
+            elif op == '<=':
+                df = df[df[stat] <= value]
+            elif op == '<':
+                df = df[df[stat] < value]
+            elif op == '==':
+                df = df[df[stat] == value]
+            applied_filters.append(f"{stat} {op} {value}")
+            print(f"[DEBUG] After stat value filter: {len(df)} players, shape: {df.shape}")
+            if df.empty:
+                print("[DEBUG] DataFrame is EMPTY after stat value filter!")
+    # After all filters:
+    print("[DEBUG] Filtered DataFrame after all filters:")
+    print(df)
+    if df.empty:
+        print("[DEBUG] DataFrame is EMPTY after all filters!")
     return df, applied_filters, original_count
 
 def sort_and_limit(df: pd.DataFrame, stat: str, top_n: int = 5) -> pd.DataFrame:
