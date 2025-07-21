@@ -79,6 +79,22 @@ def fuzzy_find(query: str, candidates: List[str], threshold: float = 0.8) -> Lis
                 matches.append(cand)
     return matches
 
+def extract_stat_phrase(query: str) -> str:
+    # Always use the phrase after the last 'by' for stat extraction
+    lowered = query.lower()
+    if ' by ' in lowered:
+        stat_phrase = lowered.split(' by ')[-1].strip()
+        print(f"[DEBUG] Extracted stat phrase after last 'by': '{stat_phrase}'")
+        return stat_phrase
+    # Fallback: after last 'in' or 'for'
+    for kw in [' in ', ' for ']:
+        if kw in lowered:
+            stat_phrase = lowered.split(kw)[-1].strip()
+            print(f"[DEBUG] Extracted stat phrase after last '{kw.strip()}': '{stat_phrase}'")
+            return stat_phrase
+    print(f"[DEBUG] No explicit stat phrase found, using full query.")
+    return query
+
 def extract_stats(query: str) -> List[str]:
     """
     More precise stat extraction with scoring and filtering.
