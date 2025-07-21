@@ -96,9 +96,6 @@ def extract_stat_phrase(query: str) -> str:
     return query
 
 def extract_stats(query: str) -> List[str]:
-    """
-    More precise stat extraction with scoring and filtering.
-    """
     alias_map = get_alias_to_column_map()
     lowered = query.lower()
     
