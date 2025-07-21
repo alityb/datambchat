@@ -66,10 +66,6 @@ def robust_correction(phrase: str, candidates: List[str]) -> str:
     return phrase
 
 def fuzzy_find(query: str, candidates: List[str], threshold: float = 0.8) -> List[str]:
-    """
-    Returns a list of candidates that are close matches to the query (case-insensitive, normalized).
-    Uses simple substring and ratio matching for now.
-    """
     import difflib
     norm_query = normalize_colname(query)
     matches = []
