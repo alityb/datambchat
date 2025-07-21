@@ -44,7 +44,7 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
     if preprocessed_hints.get('league'):
         league = preprocessed_hints['league']
         if isinstance(league, list):
-            league = league[0]  # Take first league if multiple
+            league = league[0]  # Take first league if multiple (highest priority)
         df = df[df['League'] == league]
         applied_filters.append(f"League: {league}")
         print(f"[DEBUG] After league filter: {len(df)} players")
