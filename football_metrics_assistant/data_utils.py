@@ -155,7 +155,8 @@ def get_alias_to_column_map() -> Dict[str, str]:
             alias_map['exitline'] = col
     # Add default mappings for common football stats (if present)
     default_stat_map = {
-        'tackles': 'Sliding tackles per 90',
+        'tackles': 'Tackles per 90',
+        'sliding tackles': 'Sliding tackles per 90',
         'assists': 'Assists per 90',
         'duels': 'Duels per 90',
         'interceptions': 'Interceptions per 90',
@@ -166,10 +167,61 @@ def get_alias_to_column_map() -> Dict[str, str]:
         'crosses': 'Crosses per 90',
         'dribbles': 'Dribbles attempted per 90',
         'clean sheets': 'Clean sheets',
+        'progressive passes': 'Progressive passes per 90',
+        'progressive carries': 'Progressive carries per 90',
+        'progressive actions': 'Progressive actions per 90',
+        'key passes': 'Key passes per 90',
+        'possession +/-': 'Possession +/-',
+        'poss+/-': 'Possession +/-',
+        'goals + assists': 'Goals + Assists per 90',
+        'goals+assists': 'Goals + Assists per 90',
+        'npxg': 'npxG per 90',
+        'xg': 'xG per 90',
+        'xa': 'xA per 90',
+        'shot assists': 'Shot assists per 90',
+        'deep completions': 'Deep completions per 90',
+        'through passes': 'Through passes per 90',
+        'forward passes': 'Forward passes per 90',
+        'long passes': 'Long passes per 90',
+        'short passes': 'Short passes per 90',
+        'aerial duels': 'Aerial duels per 90',
+        'defensive duels': 'Defensive duels per 90',
+        'blocks': 'Blocks per 90',
+        'clearances': 'Clearances per 90',
+        'touches': 'Touches per 90',
+        'fouls': 'Fouls suffered per 90',
+        'penalties': 'Penalties attempted',
+        'penalty success': 'Penalty success rate %',
+        'save percentage': 'Save percentage %.1',
+        'shot accuracy': 'Shots on target %.1',
+        'pass completion': 'Pass completion %.1',
+        'dribble success': 'Dribble success rate %.1',
+        'cross accuracy': 'Cross accuracy %.1',
+        'duels won': 'Duels won %',
+        'offensive duels': 'Offensive duels per 90',
+        'defensive duels won': 'Defensive duels won per 90',
+        'aerial duels won': 'Aerial duels won per 90',
+        'progressive passes completed': 'Progressive passes completed per 90',
+        'progressive pass accuracy': 'Progressive pass accuracy %.1',
+        'progressive action rate': 'Progressive action rate',
+        'ball-carrying frequency': 'Ball-carrying frequency',
+        'xg/shot': 'xG/Shot',
+        'npxg/shot': 'npxG/Shot',
+        'xg+xA': 'xG+xA per 90',
+        'npxg+xa': 'npxG+xA per 90',
+        'goals per xg': 'Goals per xG',
+        'assists per xa': 'Assists per xA',
+        'goals - xg': 'Goals - xG per 90',
+        'assists - xa': 'Assists - xA per 90',
+        'matches': 'Matches played',
+        'minutes': 'Minutes played',
+        'age': 'Age',
     }
     for user_alias, colname in default_stat_map.items():
         if colname in stat_cols:
             alias_map[user_alias] = colname
+    # Debug: print all aliases for inspection
+    print("[DEBUG] Stat alias map (sample):", dict(list(alias_map.items())[:20]))
     return alias_map
 
 @lru_cache(maxsize=1)
