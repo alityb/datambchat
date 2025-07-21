@@ -15,11 +15,15 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
     Filters the DataFrame based on preprocessed hints (team, position, age, league, etc.).
     Returns filtered DataFrame and applied filters summary.
     """
+    print("[DEBUG] filter_players called (start)")
     df = load_data()
+    print("[DEBUG] DataFrame shape after load:", df.shape)
+    print("[DEBUG] Unique leagues in data:", df['League'].unique())
     original_count = len(df)
     applied_filters = []
     print(f"[DEBUG] Initial player count: {len(df)}")
-    
+    if df.empty:
+        print("[DEBUG] DataFrame is EMPTY after load!")
     # Apply filters based on preprocessed hints
     if preprocessed_hints.get('team'):
         team = preprocessed_hints['team']
@@ -27,8 +31,9 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
             team = team[0]  # Take first team if multiple
         df = df[df['Team within selected timeframe'] == team]
         applied_filters.append(f"Team: {team}")
-        print(f"[DEBUG] After team filter: {len(df)} players")
-    
+        print(f"[DEBUG] After team filter: {len(df)} players, shape: {df.shape}")
+        if df.empty:
+            print("[DEBUG] DataFrame is EMPTY after team filter!")
     if preprocessed_hints.get('position'):
         position = preprocessed_hints['position']
         print(f"[DEBUG] Position filter value: {position}")
@@ -39,44 +44,47 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
             df = df[df['Position'] == position]
         print(f"[DEBUG] Unique positions after filter: {df['Position'].unique()}")
         applied_filters.append(f"Position: {position}")
-        print(f"[DEBUG] After position filter: {len(df)} players")
-    
+        print(f"[DEBUG] After position filter: {len(df)} players, shape: {df.shape}")
+        if df.empty:
+            print("[DEBUG] DataFrame is EMPTY after position filter!")
     if preprocessed_hints.get('league'):
         league = preprocessed_hints['league']
         if isinstance(league, list):
             league = league[0]  # Take first league if multiple (highest priority)
         df = df[df['League'] == league]
         applied_filters.append(f"League: {league}")
-        print(f"[DEBUG] After league filter: {len(df)} players")
-    
+        print(f"[DEBUG] After league filter: {len(df)} players, shape: {df.shape}")
+        if df.empty:
+            print("[DEBUG] DataFrame is EMPTY after league filter!")
     if preprocessed_hints.get('age_filter'):
         age_filter = preprocessed_hints['age_filter']
         op = age_filter['op']
         value = age_filter['value']
-        
         if op == '<':
             df = df[df['Age'] < value]
         elif op == '>':
             df = df[df['Age'] > value]
         elif op == '==':
             df = df[df['Age'] == value]
-        
         applied_filters.append(f"Age {op} {value}")
-        print(f"[DEBUG] After age filter: {len(df)} players")
-    
+        print(f"[DEBUG] After age filter: {len(df)} players, shape: {df.shape}")
+        if df.empty:
+            print("[DEBUG] DataFrame is EMPTY after age filter!")
     if preprocessed_hints.get('player'):
         player = preprocessed_hints['player']
         if isinstance(player, list):
             player = player[0]  # Take first player if multiple
         df = df[df['Player'] == player]
         applied_filters.append(f"Player: {player}")
-        print(f"[DEBUG] After player filter: {len(df)} players")
-    
+        print(f"[DEBUG] After player filter: {len(df)} players, shape: {df.shape}")
+        if df.empty:
+            print("[DEBUG] DataFrame is EMPTY after player filter!")
     # Filter out players with very few minutes (less than 270 minutes = 3 full games)
     df = df[df['Minutes played'] >= 270]
     applied_filters.append("Minimum 270 minutes played")
-    print(f"[DEBUG] After minutes filter: {len(df)} players")
-    
+    print(f"[DEBUG] After minutes filter: {len(df)} players, shape: {df.shape}")
+    if df.empty:
+        print("[DEBUG] DataFrame is EMPTY after minutes filter!")
     # Special case: if stat is goalkeeper-specific, filter to goalkeepers
     stat = preprocessed_hints.get('stat')
     if isinstance(stat, list):
