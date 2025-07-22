@@ -246,13 +246,58 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
         
         query_type = preprocessed_hints.get('query_type', 'TOP_N')
 
+        # --- Formula stat computation ---
+        stat_formula = preprocessed_hints.get('stat_formula')
+        stat = preprocessed_hints.get('stat')
+        computed_stat_col = None
+        if stat_formula:
+            safe_expr = stat_formula['expr']
+            display_expr = stat_formula.get('display_expr', safe_expr)
+            columns = stat_formula['columns']
+            safe_map = stat_formula.get('safe_map', {})
+            ops = stat_formula['ops']
+            # Check all columns exist
+            missing = [col for col in columns if col not in df.columns]
+            if missing:
+                print(f"[DEBUG] Formula stat missing columns: {missing}")
+                return {
+                    "error": f"Formula stat missing columns: {missing}",
+                    "applied_filters": applied_filters,
+                    "original_count": original_count
+                }
+            # Compute the formula column
+            try:
+                # Build a safe eval environment
+                local_env = {'safe_map': {}}
+                for safe_var, col in safe_map.items():
+                    local_env['safe_map'][safe_var] = df[col]
+                print(f"[DEBUG] Formula eval local_env keys: {list(local_env['safe_map'].keys())}")
+                # Use the display_expr as the new column name
+                computed_stat_col = display_expr
+                df[computed_stat_col] = eval(safe_expr, {"__builtins__": None}, local_env)
+                # Patch: replace inf, -inf, NaN with None
+                import numpy as np
+                before = df[computed_stat_col].isna().sum()
+                df[computed_stat_col] = df[computed_stat_col].replace([np.inf, -np.inf], np.nan)
+                after = df[computed_stat_col].isna().sum()
+                if after > before:
+                    print(f"[DEBUG] Replaced {after - before} inf/-inf values with NaN in computed stat column '{computed_stat_col}'")
+                stat = computed_stat_col
+            except Exception as e:
+                print(f"[DEBUG] Error computing formula stat: {e}")
+                return {
+                    "error": f"Error computing formula stat: {e}",
+                    "applied_filters": applied_filters,
+                    "original_count": original_count
+                }
+        # --- End formula stat computation ---
+
         if query_type == 'COUNT' or query_type == 'FILTER':
             # Always include filtered_data for table rendering
-            stat = preprocessed_hints.get('stat')
             filtered_data = df[['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']]
             if stat and stat in df.columns:
                 filtered_data = filtered_data.copy()
-                filtered_data[stat] = df[stat]
+                filtered_data[stat] = df[stat].apply(to_python_type)
             return {
                 "success": True,
                 "count": len(df),
@@ -269,7 +314,6 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
             }
         elif query_type in ('TOP_N', 'FILTER'):
             # Get stat for analysis
-            stat = preprocessed_hints.get('stat')
             if not stat:
                 return {
                     "error": "No stat specified for analysis",
