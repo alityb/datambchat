@@ -81,8 +81,23 @@ def fuzzy_find(query: str, candidates: List[str], threshold: float = 0.8) -> Lis
     return matches
 
 def extract_stat_phrase(query: str) -> str:
-    # Always use the phrase after the last 'by' for stat extraction
+    # If a math operator is present, extract the phrase containing it (before ' in ' or ' for ')
     lowered = query.lower()
+    if any(op in lowered for op in ['+', '-', '/', '*']):
+        # Find the first ' in ' or ' for ' after the operator, and take everything before it
+        for kw in [' in ', ' for ']:
+            idx = lowered.find(kw)
+            if idx != -1:
+                # Only use if the operator is before the keyword
+                op_idx = max(lowered.find(op) for op in ['+', '-', '/', '*'])
+                if op_idx != -1 and op_idx < idx:
+                    stat_phrase = query[:idx].strip()
+                    print(f"[DEBUG] Extracted stat formula phrase before '{kw.strip()}': '{stat_phrase}'")
+                    return stat_phrase
+        # No 'in' or 'for' after operator, use full query
+        print(f"[DEBUG] Extracted stat formula phrase (full query): '{query.strip()}'")
+        return query.strip()
+    # Otherwise, use the old logic
     if ' by ' in lowered:
         stat_phrase = lowered.split(' by ')[-1].strip()
         print(f"[DEBUG] Extracted stat phrase after last 'by': '{stat_phrase}'")
@@ -95,6 +110,86 @@ def extract_stat_phrase(query: str) -> str:
             return stat_phrase
     print(f"[DEBUG] No explicit stat phrase found, using full query.")
     return query
+
+def extract_stat_formula(query: str) -> dict:
+    """
+    Detects and parses stat formulas like 'xg/xa', 'goals + assists', 'xg - xa', 'xA + xG', 'Sliding tackles per 90 + progressive passes per 90'.
+    Returns a dict with the formula expression (safe for eval), mapped columns, display expr, and operators.
+    """
+    alias_map = get_alias_to_column_map()
+    stat_phrase = extract_stat_phrase(query)
+    # Only consider the part before ' in ' or ' for ' for stat formulas
+    stat_phrase = re.split(r' in | for ', stat_phrase)[0].strip()
+    # Look for math operators
+    ops = re.findall(r'[+\-/*]', stat_phrase)
+    if not ops:
+        print(f"[DEBUG] No math operator found in stat phrase: '{stat_phrase}'")
+        return None
+    # Split by operators, map each part
+    parts = re.split(r'[+\-/*]', stat_phrase)
+    print(f"[DEBUG] Formula parts: {parts}, ops: {ops}")
+    mapped_cols = []
+    safe_vars = []
+    safe_map = {}
+    # Forced mapping for common football terms
+    forced_map = {
+        'goals': 'Goals per 90',
+        'goal': 'Goals per 90',
+        'assists': 'Assists per 90',
+        'assist': 'Assists per 90',
+        'g': 'Goals per 90',
+        'a': 'Assists per 90',
+        'xg': 'xG per 90',
+        'xa': 'xA per 90',
+        'npxg': 'npxG per 90',
+        'npxa': 'npxA per 90',
+    }
+    for part in parts:
+        part = part.strip().lower()
+        # 1. Forced mapping for common terms
+        if part in forced_map:
+            mapped_col = forced_map[part]
+            print(f"[DEBUG] Formula part '{part}' forced mapped to '{mapped_col}'")
+        else:
+            # 2. Try exact alias match (case-insensitive)
+            norm_part = part.replace(' ', '').replace('-', '').replace('+', 'plus').replace('/', '').replace('(', '').replace(')', '')
+            if norm_part in alias_map:
+                mapped_col = alias_map[norm_part]
+                print(f"[DEBUG] Formula part '{part}' mapped to '{mapped_col}' via exact alias match '{norm_part}'")
+            else:
+                # 3. Try robust_correction and fuzzy match
+                all_aliases = list(alias_map.keys())
+                corrected = robust_correction(part, all_aliases)
+                from difflib import get_close_matches
+                match = get_close_matches(corrected, all_aliases, n=1, cutoff=0.8)  # stricter cutoff
+                if match:
+                    mapped_col = alias_map[match[0]]
+                    print(f"[DEBUG] Formula part '{part}' mapped to '{mapped_col}' via fuzzy match '{match[0]}'")
+                else:
+                    # 4. Substring match
+                    sub_matches = [col for alias, col in alias_map.items() if norm_part in alias.lower()]
+                    if sub_matches:
+                        mapped_col = sub_matches[0]
+                        print(f"[DEBUG] Formula part '{part}' mapped to '{mapped_col}' via substring match")
+                    else:
+                        print(f"[DEBUG] Formula part '{part}' could not be mapped, using as is")
+                        mapped_col = part  # fallback
+        mapped_cols.append(mapped_col)
+        # Build safe variable name
+        safe_var = mapped_col.replace(' ', '_').replace('.', '_').replace('%', 'pct').replace('(', '').replace(')', '').replace('-', '_').replace('+', 'plus').replace('/', '_')
+        safe_vars.append(safe_var)
+        safe_map[safe_var] = mapped_col
+    # Build safe expr for eval
+    safe_expr = ''
+    display_expr = ''
+    for i, safe_var in enumerate(safe_vars):
+        safe_expr += f'safe_map["{safe_var}"]'
+        display_expr += f'({mapped_cols[i]})'
+        if i < len(ops):
+            safe_expr += ops[i]
+            display_expr += ops[i]
+    print(f"[DEBUG] Formula safe_expr: {safe_expr}, display_expr: {display_expr}, mapped_cols: {mapped_cols}")
+    return {'expr': safe_expr, 'display_expr': display_expr, 'columns': mapped_cols, 'ops': ops, 'safe_map': safe_map}
 
 def extract_stats(query: str) -> List[str]:
     alias_map = get_alias_to_column_map()
@@ -196,7 +291,14 @@ def preprocess_query(query: str) -> Dict[str, Any]:
         result["season"] = season_match.group(1)
 
     # 4. Stat/metric extraction (only for TOP_N or FILTER)
-    if query_type in ("TOP_N", "FILTER"):
+    stat_formula = extract_stat_formula(query)
+    stat_formula = extract_stat_formula(query)
+    if stat_formula:
+        result["stat_formula"] = stat_formula
+        result["stat"] = stat_formula['expr']
+        # Force query_type to TOP_N for formula queries
+        result["query_type"] = "TOP_N"
+    elif query_type in ("TOP_N", "FILTER"):
         found_stats = extract_stats(query)
         if found_stats:
             result["stat"] = found_stats[0] if len(found_stats) == 1 else found_stats
