@@ -74,43 +74,50 @@ def chat(req: ChatRequest):
     
     # Add real data analysis if available
     if data_analysis and not data_analysis.get('error') and data_analysis.get('success'):
-        if data_analysis.get('top_players') and preprocessed.get('query_type') in ('TOP_N',):
-            # Build the markdown table for TOP_N
+        # Determine the correct stat column name for table and summary
+        stat_col = None
+        if 'stat_formula' in preprocessed:
+            # Use display_expr if present
+            stat_col = preprocessed['stat_formula'].get('display_expr')
+        elif 'stat' in data_analysis:
+            stat_col = data_analysis['stat']
+        elif 'stat' in preprocessed:
+            stat_col = preprocessed['stat']
+        else:
+            stat_col = ''
+        filtered_data = []
+        # Prefer top_players if present, else filtered_data
+        if data_analysis.get('top_players'):
+            filtered_data = data_analysis['top_players']
+        elif data_analysis.get('filtered_data'):
+            filtered_data = data_analysis['filtered_data']
+        # Build the table
+        table = None
+        if filtered_data:
             table = f"| Rank | Player | Team | Position | Value |\n"
             table += "|------|--------|------|----------|-------|\n"
-            for i, player in enumerate(data_analysis['top_players'], 1):
+            for i, player in enumerate(filtered_data, 1):
                 player_name = player['Player']
                 team = player['Team within selected timeframe']
                 position = player.get('Position', 'N/A')
-                stat_value = player.get(data_analysis.get('stat', ''), 'N/A')
+                stat_value = player.get(stat_col, 'N/A')
                 table += f"| {i} | {player_name} | {team} | {position} | {stat_value} |\n"
             table += f"\nData based on {data_analysis.get('count', 0)} players matching your criteria."
-
-            # Build a simple Statmuse-style summary in Python
-            top_player = data_analysis['top_players'][0]
-            player_name = top_player['Player']
-            team = top_player['Team within selected timeframe']
-            stat = data_analysis.get('stat', 'the requested stat')
-            stat_value = top_player.get(stat, 'N/A')
-            league = preprocessed.get('league')
-            league_str = f" in {league}" if league else ""
-            summary = f"{player_name} led the{league_str} in {stat} with {stat_value}."
-
-            return {
-                "summary": summary,
-                "table": table,
-                "preprocessed": preprocessed,
-                "retrieval": {
-                    "stat_definitions": len(stat_context),
-                    "position_info": len(position_context),
-                    "analysis_guides": len(analysis_context)
-                },
-                "data_analysis": data_analysis if data_analysis else None
-            }
-        elif data_analysis.get('count') is not None:
-            # COUNT or FILTER query with stat value filter: show all matching players in a table
+        # Unified summary logic
+        if stat_col and filtered_data:
+            # Sort by stat_col descending and get the top player
+            try:
+                top_player = max(filtered_data, key=lambda p: p.get(stat_col, float('-inf')) if isinstance(p.get(stat_col), (int, float)) else float('-inf'))
+                player_name = top_player['Player']
+                team = top_player['Team within selected timeframe']
+                stat_value = top_player.get(stat_col, 'N/A')
+                league = preprocessed.get('league', '')
+                league_str = f" in {league}" if league else ""
+                summary = f"{player_name} ({team}) had the highest {stat_col}{league_str} with {stat_value}."
+            except Exception as e:
+                summary = f"Top player summary unavailable due to error: {e}"
+        elif filtered_data:
             league = preprocessed.get('league', '')
-            stat = preprocessed.get('stat', '')
             value = preprocessed.get('stat_value')
             op = preprocessed.get('stat_op')
             op_str = {
@@ -120,28 +127,20 @@ def chat(req: ChatRequest):
                 '<': 'less than',
                 '==': 'exactly'
             }.get(op, op)
-            summary = f"There are {data_analysis['count']} players in {league} with {op_str} {value} {stat}."
-            # Build the table of all matching players
-            table = f"| Rank | Player | Team | Position | Value |\n"
-            table += "|------|--------|------|----------|-------|\n"
-            for i, player in enumerate(data_analysis.get('filtered_data', []), 1):
-                player_name = player['Player']
-                team = player['Team within selected timeframe']
-                position = player.get('Position', 'N/A')
-                stat_value = player.get(stat, 'N/A')
-                table += f"| {i} | {player_name} | {team} | {position} | {stat_value} |\n"
-            table += f"\nData based on {data_analysis.get('count', 0)} players matching your criteria."
-            return {
-                "summary": summary,
-                "table": table,
-                "preprocessed": preprocessed,
-                "retrieval": {
-                    "stat_definitions": len(stat_context),
-                    "position_info": len(position_context),
-                    "analysis_guides": len(analysis_context)
-                },
-                "data_analysis": data_analysis
-            }
+            summary = f"There are {data_analysis['count']} players in {league} with {op_str} {value} {stat_col}."
+        else:
+            summary = "No players found matching your criteria."
+        return {
+            "summary": summary,
+            "table": table,
+            "preprocessed": preprocessed,
+            "retrieval": {
+                "stat_definitions": len(stat_context),
+                "position_info": len(position_context),
+                "analysis_guides": len(analysis_context)
+            },
+            "data_analysis": data_analysis if data_analysis else None
+        }
     else:
         # For non-data queries or no results, return a clear message
         return {
@@ -158,5 +157,5 @@ def chat(req: ChatRequest):
 
 @app.get("/stat-definitions")
 def stat_definitions():
-    # Placeholder for stat definitions endpoint
+    # Placeholder for stat definitions endpoint 
     return {"definitions": []} 
