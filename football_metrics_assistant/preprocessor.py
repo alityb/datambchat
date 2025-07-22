@@ -274,5 +274,47 @@ def preprocess_query(query: str) -> Dict[str, Any]:
             result["stat_op"] = stat_value_filter["stat_op"]
             result["stat_value"] = stat_value_filter["stat_value"]
 
+    # LLM fallback for stat/league extraction if missing or ambiguous
+    ambiguous_league = not result.get("league") or (isinstance(result.get("league"), list) and len(result["league"]) > 3)
+    ambiguous_stat = not result.get("stat") or (isinstance(result.get("stat"), list) and len(result["stat"]) > 3)
+    if ambiguous_league or ambiguous_stat:
+        from football_metrics_assistant.llm_interface import ask_llama
+        llm_prompt = f"Extract the main stat and league(s) from this football query.\nQuery: '{query}'\nRespond in JSON: {{'stat': ..., 'league': ...}}. Only include fields you are confident about."
+        try:
+            llm_response = ask_llama(llm_prompt)
+            import json
+            llm_json = json.loads(llm_response)
+            alias_map = get_alias_to_column_map()
+            # Normalize stat
+            if ambiguous_stat and llm_json.get('stat'):
+                llm_stat = llm_json['stat']
+                # Try direct, substring, and lowercased match
+                stat_col = None
+                if llm_stat in alias_map:
+                    stat_col = alias_map[llm_stat]
+                else:
+                    norm_llm_stat = llm_stat.lower().replace(' ', '')
+                    for alias, col in alias_map.items():
+                        if norm_llm_stat in alias.lower().replace(' ', ''):
+                            stat_col = col
+                            break
+                if stat_col:
+                    result['stat'] = stat_col
+                else:
+                    result['stat'] = llm_stat
+            # Normalize league
+            if ambiguous_league and llm_json.get('league'):
+                leagues = get_all_leagues()
+                llm_league = llm_json['league']
+                if isinstance(llm_league, list):
+                    league_matches = [l for l in leagues if l in llm_league or l.lower() in [x.lower() for x in llm_league]]
+                    result['league'] = league_matches if league_matches else llm_league
+                else:
+                    league_match = next((l for l in leagues if l.lower() == llm_league.lower()), None)
+                    result['league'] = league_match if league_match else llm_league
+            print(f"[DEBUG] LLM fallback extraction: {llm_json}")
+        except Exception as e:
+            print(f"[DEBUG] LLM fallback extraction failed: {e}")
+
     print(f"[DEBUG] Preprocessed query result: {result}")
     return result 
