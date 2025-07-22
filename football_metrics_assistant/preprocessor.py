@@ -109,6 +109,12 @@ def extract_stats(query: str) -> List[str]:
         chosen_stats = [alias_map[m] for m in matches]
         print(f"[DEBUG] Chosen stat columns from fuzzy matches: {chosen_stats}")
         return chosen_stats
+    # Substring and lowercased matching
+    norm_corrected = corrected_stat.lower().replace(' ', '')
+    substring_matches = [col for alias, col in alias_map.items() if norm_corrected in alias.lower().replace(' ', '')]
+    if substring_matches:
+        print(f"[DEBUG] Substring stat matches for phrase '{corrected_stat}': {substring_matches}")
+        return substring_matches
     # Fallback: try default mapping for generic terms
     for alias, col in alias_map.items():
         if alias in corrected_stat:
