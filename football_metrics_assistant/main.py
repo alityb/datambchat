@@ -74,6 +74,61 @@ def chat(req: ChatRequest):
     
     # Add real data analysis if available
     if data_analysis and not data_analysis.get('error') and data_analysis.get('success'):
+        # Multi-league summary logic
+        if data_analysis.get('multi_league', False):
+            leagues = data_analysis.get('top_players_by_league', {})
+            all_players = []
+            stat_col = None
+            summary_by_league = data_analysis.get('summary_by_league', {})
+            # Collect all players from all leagues
+            for league, players in leagues.items():
+                if players:
+                    if not stat_col and summary_by_league and league in summary_by_league:
+                        stat_col = summary_by_league[league].get('stat')
+                    for player in players:
+                        player = dict(player)  # Copy to avoid mutating original
+                        player['League'] = league
+                        all_players.append(player)
+            # Fallback to stat in data_analysis if not found
+            if not stat_col and 'stat' in data_analysis:
+                stat_col = data_analysis['stat']
+            # Sort all players by stat_col descending
+            all_players = [p for p in all_players if stat_col in p and p[stat_col] is not None]
+            all_players.sort(key=lambda p: p.get(stat_col, float('-inf')), reverse=True)
+            # Build combined table (top 5)
+            table = None
+            if all_players:
+                table = f"| Rank | Player | Team | League | Position | Value |\n"
+                table += "|------|--------|------|--------|----------|-------|\n"
+                for i, player in enumerate(all_players[:5], 1):
+                    player_name = player['Player']
+                    team = player['Team within selected timeframe']
+                    league = player.get('League', 'N/A')
+                    position = player.get('Position', 'N/A')
+                    stat_value = player.get(stat_col, 'N/A')
+                    table += f"| {i} | {player_name} | {team} | {league} | {position} | {stat_value} |\n"
+                table += f"\nData based on {len(all_players)} players across all selected leagues."
+            # Build summary for overall top player
+            if all_players:
+                top_player = all_players[0]
+                player_name = top_player['Player']
+                team = top_player['Team within selected timeframe']
+                league = top_player.get('League', 'N/A')
+                stat_value = top_player.get(stat_col, 'N/A')
+                summary = f"{player_name} ({team}, {league}) had the highest {stat_col} across all selected leagues with {stat_value}."
+            else:
+                summary = "No players found matching your criteria."
+            return {
+                "summary": summary,
+                "table": table,
+                "preprocessed": preprocessed,
+                "retrieval": {
+                    "stat_definitions": len(stat_context),
+                    "position_info": len(position_context),
+                    "analysis_guides": len(analysis_context)
+                },
+                "data_analysis": data_analysis if data_analysis else None
+            }
         # Determine the correct stat column name for table and summary
         stat_col = None
         if 'stat_formula' in preprocessed:
