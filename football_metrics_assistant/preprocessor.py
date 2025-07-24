@@ -7,6 +7,7 @@ from football_metrics_assistant.data_utils import (
 from spellchecker import SpellChecker
 import phonetics
 from football_metrics_assistant.llm_interface import classify_query_type
+from difflib import get_close_matches, SequenceMatcher
 
 LEAGUE_PRIORITY = [
     "Premier League",
@@ -58,7 +59,6 @@ def robust_correction(phrase: str, candidates: List[str]) -> str:
             print(f"[DEBUG] Phonetic match: '{norm_phrase}' -> '{cand}'")
             return cand
     # 4. Fuzzy matching
-    from difflib import get_close_matches
     match = get_close_matches(norm_phrase, candidates, n=1, cutoff=0.6)
     if match:
         print(f"[DEBUG] Fuzzy match: '{norm_phrase}' -> '{match[0]}'")
@@ -118,6 +118,20 @@ def extract_stat_formula(query: str) -> dict:
     """
     alias_map = get_alias_to_column_map()
     stat_phrase = extract_stat_phrase(query)
+    # Check for common short stats first
+    lowered_phrase = stat_phrase.lower().strip()
+    if lowered_phrase in ['xg', 'xa', 'npxg', 'goals', 'assists', 'g', 'a']:
+        forced_map = {
+            'xg': 'xG per 90',
+            'xa': 'xA per 90', 
+            'npxg': 'npxG per 90',
+            'goals': 'Goals per 90',
+            'assists': 'Assists per 90',
+            'g': 'Goals per 90',
+            'a': 'Assists per 90'
+        }
+        if lowered_phrase in forced_map:
+            return [forced_map[lowered_phrase]]
     # Only consider the part before ' in ' or ' for ' for stat formulas
     stat_phrase = re.split(r' in | for ', stat_phrase)[0].strip()
     # Look for math operators
@@ -126,54 +140,94 @@ def extract_stat_formula(query: str) -> dict:
         print(f"[DEBUG] No math operator found in stat phrase: '{stat_phrase}'")
         return None
     # Split by operators, map each part
+# Split by operators, map each part
     parts = re.split(r'[+\-/*]', stat_phrase)
     print(f"[DEBUG] Formula parts: {parts}, ops: {ops}")
+
+    # Clean up parts - remove common prefixes like "top 10", "best 5", etc.
+    cleaned_parts = []
+    for part in parts:
+        part = part.strip()
+        # Remove common prefixes
+        part = re.sub(r'^(top|best)\s+\d+\s+', '', part, flags=re.IGNORECASE)
+        part = re.sub(r'^\d+\s+', '', part)  # Remove leading numbers
+        cleaned_parts.append(part.strip())
+
+    parts = cleaned_parts
+    print(f"[DEBUG] Cleaned formula parts: {parts}")    
     mapped_cols = []
     safe_vars = []
     safe_map = {}
-    # Forced mapping for common football terms
+    # Forced mapping for goals/assists (singular/plural)
     forced_map = {
         'goals': 'Goals per 90',
         'goal': 'Goals per 90',
+        'goals per 90': 'Goals per 90',
+        'goal per 90': 'Goals per 90',
         'assists': 'Assists per 90',
         'assist': 'Assists per 90',
-        'g': 'Goals per 90',
-        'a': 'Assists per 90',
+        'assists per 90': 'Assists per 90',
+        'assist per 90': 'Assists per 90',
         'xg': 'xG per 90',
         'xa': 'xA per 90',
         'npxg': 'npxG per 90',
-        'npxa': 'npxA per 90',
     }
+    prefixes = ["most ", "top ", "highest ", "best "]
     for part in parts:
-        part = part.strip().lower()
-        # 1. Forced mapping for common terms
-        if part in forced_map:
-            mapped_col = forced_map[part]
-            print(f"[DEBUG] Formula part '{part}' forced mapped to '{mapped_col}'")
+        part = part.strip()
+        part_lc = part.lower().strip()
+        # Remove common prefixes
+        orig_part_lc = part_lc
+        for prefix in prefixes:
+            if part_lc.startswith(prefix):
+                part_lc = part_lc[len(prefix):].strip()
+                print(f"[DEBUG] Removed prefix '{prefix}' from '{orig_part_lc}' -> '{part_lc}'")
+                break
+        # Forced mapping check
+        if part_lc in forced_map:
+            mapped_col = forced_map[part_lc]
+            print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' forced-mapped to '{mapped_col}' (forced map)")
+        elif part_lc == 'goals per 90':
+            mapped_col = 'Goals per 90'
+            print(f"[DEBUG] Formula part '{part}' direct-mapped to 'Goals per 90'")
+        elif part_lc == 'assists per 90':
+            mapped_col = 'Assists per 90'
+            print(f"[DEBUG] Formula part '{part}' direct-mapped to 'Assists per 90'")
         else:
-            # 2. Try exact alias match (case-insensitive)
-            norm_part = part.replace(' ', '').replace('-', '').replace('+', 'plus').replace('/', '').replace('(', '').replace(')', '')
+            # 1. Try exact alias match (case-insensitive)
+            norm_part = part_lc.replace(' ', '').replace('-', '').replace('+', 'plus').replace('/', '').replace('(', '').replace(')', '')
             if norm_part in alias_map:
                 mapped_col = alias_map[norm_part]
-                print(f"[DEBUG] Formula part '{part}' mapped to '{mapped_col}' via exact alias match '{norm_part}'")
+                print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' mapped to '{mapped_col}' via exact alias match '{norm_part}'")
             else:
-                # 3. Try robust_correction and fuzzy match
+                # 2. Try robust_correction and fuzzy match
                 all_aliases = list(alias_map.keys())
-                corrected = robust_correction(part, all_aliases)
-                from difflib import get_close_matches
+                corrected = robust_correction(part_lc, all_aliases)
                 match = get_close_matches(corrected, all_aliases, n=1, cutoff=0.8)  # stricter cutoff
-                if match:
+                if match and alias_map[match[0]].lower().startswith('x'):
                     mapped_col = alias_map[match[0]]
-                    print(f"[DEBUG] Formula part '{part}' mapped to '{mapped_col}' via fuzzy match '{match[0]}'")
+                    print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' mapped to '{mapped_col}' via fuzzy match '{match[0]}'")
                 else:
-                    # 4. Substring match
+                    # 3. General substring match (all stats)
                     sub_matches = [col for alias, col in alias_map.items() if norm_part in alias.lower()]
                     if sub_matches:
                         mapped_col = sub_matches[0]
-                        print(f"[DEBUG] Formula part '{part}' mapped to '{mapped_col}' via substring match")
+                        print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' mapped to '{mapped_col}' via general substring match")
                     else:
-                        print(f"[DEBUG] Formula part '{part}' could not be mapped, using as is")
-                        mapped_col = part  # fallback
+                        # 4. LLM fallback
+                        try:
+                            from football_metrics_assistant.llm_interface import ask_llama
+                            llm_prompt = f"Given the following stat columns: {list(set(alias_map.values()))}\nWhich column best matches the user phrase: '{part}'? Respond with the exact column name only."
+                            llm_col = ask_llama(llm_prompt).strip()
+                            if llm_col in alias_map.values():
+                                mapped_col = llm_col
+                                print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' mapped to '{mapped_col}' via LLM fallback")
+                            else:
+                                mapped_col = part
+                                print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' could not be mapped, using as is (even after LLM fallback)")
+                        except Exception as e:
+                            mapped_col = part
+                            print(f"[DEBUG] LLM fallback failed for '{part}': {e}")
         mapped_cols.append(mapped_col)
         # Build safe variable name
         safe_var = mapped_col.replace(' ', '_').replace('.', '_').replace('%', 'pct').replace('(', '').replace(')', '').replace('-', '_').replace('+', 'plus').replace('/', '_')
