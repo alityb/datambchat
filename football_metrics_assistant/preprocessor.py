@@ -488,7 +488,6 @@ def preprocess_query(query: str) -> Dict[str, Any]:
         stat_aliases = get_alias_to_column_map()
         stat_phrase = stat_value_filter["stat"]
         # Fuzzy match stat phrase to column
-        from difflib import get_close_matches
         all_aliases = list(stat_aliases.keys())
         match = get_close_matches(stat_phrase, all_aliases, n=1, cutoff=0.6)
         if match:
@@ -501,10 +500,21 @@ def preprocess_query(query: str) -> Dict[str, Any]:
             result["stat"] = stat_phrase
             result["stat_op"] = stat_value_filter["stat_op"]
             result["stat_value"] = stat_value_filter["stat_value"]
+    # Early stat detection for common patterns
+    if not result.get("stat"):
+        query_lower = query.lower()
+        # Check for standalone xG, xA, etc.
+        if " xg " in query_lower or query_lower.startswith("xg ") or query_lower.endswith(" xg"):
+            result["stat"] = "xG per 90"
+        elif " xa " in query_lower or query_lower.startswith("xa ") or query_lower.endswith(" xa"):
+            result["stat"] = "xA per 90"
+        elif " npxg " in query_lower or query_lower.startswith("npxg ") or query_lower.endswith(" npxg"):
+            result["stat"] = "npxG per 90"
 
     # LLM fallback for stat/league extraction if missing or ambiguous
-    ambiguous_league = not result.get("league") or (isinstance(result.get("league"), list) and len(result["league"]) > 3)
-    ambiguous_stat = not result.get("stat") or (isinstance(result.get("stat"), list) and len(result["stat"]) > 3)
+    ambiguous_league = not result.get("league") 
+    ambiguous_stat = not result.get("stat") and not result.get("stat_formula")
+
     if ambiguous_league or ambiguous_stat:
         from football_metrics_assistant.llm_interface import ask_llama
         llm_prompt = f"Extract the main stat and league(s) from this football query.\nQuery: '{query}'\nRespond in JSON: {{'stat': ..., 'league': ...}}. Only include fields you are confident about."
@@ -513,25 +523,15 @@ def preprocess_query(query: str) -> Dict[str, Any]:
             import json
             llm_json = json.loads(llm_response)
             alias_map = get_alias_to_column_map()
-            # Normalize stat
-            if ambiguous_stat and llm_json.get('stat'):
+            
+            # Only use LLM stat if we don't already have a good one
+            if ambiguous_stat and llm_json.get('stat') and not result.get("stat") and not result.get("stat_formula"):
                 llm_stat = llm_json['stat']
-                # Try direct, substring, and lowercased match
-                stat_col = None
-                if llm_stat in alias_map:
-                    stat_col = alias_map[llm_stat]
-                else:
-                    norm_llm_stat = llm_stat.lower().replace(' ', '')
-                    for alias, col in alias_map.items():
-                        if norm_llm_stat in alias.lower().replace(' ', ''):
-                            stat_col = col
-                            break
-                if stat_col:
-                    result['stat'] = stat_col
-                else:
-                    result['stat'] = llm_stat
-            # Normalize league
-            if ambiguous_league and llm_json.get('league'):
+                if llm_stat.lower() in alias_map:
+                    result['stat'] = alias_map[llm_stat.lower()]
+            
+            # Only use LLM league if we don't already have a good one        
+            if ambiguous_league and llm_json.get('league') and not result.get("league"):
                 leagues = get_all_leagues()
                 llm_league = llm_json['league']
                 if isinstance(llm_league, list):
@@ -545,4 +545,4 @@ def preprocess_query(query: str) -> Dict[str, Any]:
             print(f"[DEBUG] LLM fallback extraction failed: {e}")
 
     print(f"[DEBUG] Preprocessed query result: {result}")
-    return result 
+    return result
