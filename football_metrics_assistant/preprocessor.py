@@ -390,29 +390,96 @@ def preprocess_query(query: str) -> Dict[str, Any]:
 
     # 8. League extraction (robust pipeline)
     leagues = get_all_leagues()
-    league_keywords = ['in', 'from', 'of', 'league', 'premier', 'bundesliga', 'laliga', 'serie', 'ligue', 'eredivisie', 'championship']
+    lowered_query = query.lower()
+    # Only consider the part after ' in ' or ' for ' for league extraction
+    league_part = re.split(r' in | for ', lowered_query)
+    if len(league_part) > 1:
+        league_str = league_part[1]
+    else:
+        league_str = lowered_query
+    league_phrases = re.split(r'\band\b|,|&', league_str)
     found_leagues = []
-    for keyword in league_keywords:
-        if keyword in lowered:
-            parts = lowered.split(keyword)
-            if len(parts) > 1:
-                potential_league = parts[1].strip()
-                potential_league = re.sub(r'\b(top|best|players?|by|and|or|the)\b', '', potential_league).strip()
-                if potential_league:
-                    corrected_league = robust_correction(potential_league, leagues)
-                    found_leagues = fuzzy_find(corrected_league, leagues, threshold=0.6)
-                    print(f"[DEBUG] League extraction: keyword='{keyword}', potential_league='{potential_league}', corrected='{corrected_league}', matches={found_leagues}")
-                    if found_leagues:
-                        break
-    if not found_leagues:
-        corrected_league = robust_correction(query, leagues)
-        found_leagues = fuzzy_find(corrected_league, leagues, threshold=0.6)
-        print(f"[DEBUG] League extraction: fallback to whole query, corrected='{corrected_league}', matches={found_leagues}")
+    def norm_league(s):
+        return s.lower().strip().replace('.', '').replace('-', ' ').replace(' ', '')
+    norm_league_map = {norm_league(lg): lg for lg in leagues}
+    # --- Remove age/irrelevant words from league phrases ---
+    age_patterns = [r'under ?\d+', r'u-?\d+', r'over ?\d+', r'age ?\d+']
+    def clean_league_phrase(phrase):
+        for pat in age_patterns:
+            phrase = re.sub(pat, '', phrase, flags=re.IGNORECASE)
+        return phrase.strip()
+    for phrase in league_phrases:
+        orig_phrase = phrase
+        phrase = clean_league_phrase(phrase)
+        phrase = phrase.strip().replace('.', '').replace('-', ' ')
+        norm_phrase = phrase.lower().replace(' ', '')
+        print(f"[DEBUG] Trying to match league phrase: '{orig_phrase}' cleaned to '{phrase}' normalized to '{norm_phrase}'")
+        # 1. Try exact normalized match
+        if norm_phrase in norm_league_map:
+            matched_league = norm_league_map[norm_phrase]
+            print(f"[DEBUG] Normalized match: '{norm_phrase}' -> '{matched_league}'")
+            found_leagues.append(matched_league)
+            continue
+        # 2. Fuzzy match on normalized forms
+        norm_leagues = list(norm_league_map.keys())
+        match = get_close_matches(norm_phrase, norm_leagues, n=1, cutoff=0.8)
+        if match:
+            matched_league = norm_league_map[match[0]];
+            print(f"[DEBUG] Fuzzy normalized match: '{norm_phrase}' -> '{matched_league}'")
+            found_leagues.append(matched_league)
+            continue
+        # 3. Fallback: print similarity for debugging
+        for norm_lg, orig_lg in norm_league_map.items():
+            sim = SequenceMatcher(None, norm_phrase, norm_lg).ratio()
+            print(f"[DEBUG] Similarity between '{norm_phrase}' and '{norm_lg}': {sim}")
+    found_leagues = list(dict.fromkeys(found_leagues))  # Remove duplicates, preserve order
     if found_leagues:
         found_leagues = prioritize_leagues(found_leagues)
-        result["league"] = found_leagues[0]  # Always use the top-priority league only
+        if len(found_leagues) == 1:
+            result["league"] = found_leagues[0]
+        else:
+            result["league"] = found_leagues
+        print(f"[DEBUG] All matched leagues: {found_leagues}")
     else:
-        result["league"] = None
+        # fallback to old logic if nothing found
+        league_keywords = ['in', 'from', 'of', 'league', 'premier', 'bundesliga', 'laliga', 'serie', 'ligue', 'eredivisie', 'championship']
+        for keyword in league_keywords:
+            if keyword in lowered_query:
+                parts = lowered_query.split(keyword)
+                if len(parts) > 1:
+                    potential_league = parts[1].strip()
+                    potential_league = re.sub(r'\b(top|best|players?|by|and|or|the)\b', '', potential_league).strip()
+                    if potential_league:
+                        corrected_league = robust_correction(potential_league, leagues)
+                        found_leagues = fuzzy_find(corrected_league, leagues, threshold=0.6)
+                        print(f"[DEBUG] League extraction: keyword='{keyword}', potential_league='{potential_league}', corrected='{corrected_league}', matches={found_leagues}")
+                        if found_leagues:
+                            break
+        if not found_leagues:
+            corrected_league = robust_correction(query, leagues)
+            found_leagues = fuzzy_find(corrected_league, leagues, threshold=0.6)
+            print(f"[DEBUG] League extraction: fallback to whole query, corrected='{corrected_league}', matches={found_leagues}")
+        if found_leagues:
+            found_leagues = prioritize_leagues(found_leagues)
+            if len(found_leagues) == 1:
+                result["league"] = found_leagues[0]
+            else:
+                result["league"] = found_leagues
+            print(f"[DEBUG] All matched leagues: {found_leagues}")
+        else:
+            result["league"] = None
+
+    # --- Custom league aliases for top 5/7 leagues ---
+    top5_leagues = ["Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1"]
+    top7_leagues = top5_leagues + ["Eredivisie", "Liga Portugal"]
+    if re.search(r"top ?5 leagues?", lowered):
+        result["league"] = top5_leagues
+        result["_league_is_alias"] = True
+        print(f"[DEBUG] Detected 'top 5 leagues' in query, using: {top5_leagues}")
+    elif re.search(r"top ?7 leagues?", lowered):
+        result["league"] = top7_leagues
+        result["_league_is_alias"] = True
+        print(f"[DEBUG] Detected 'top 7 leagues' in query, using: {top7_leagues}")
 
     # Stat value filter extraction
     stat_value_filter = extract_stat_value_filter(query)
