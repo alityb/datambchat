@@ -1,8 +1,10 @@
+import re
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, Any, List, Tuple, Optional
 from football_metrics_assistant.data_utils import load_data, get_stat_columns
+
 
 # Set style for better-looking charts
 plt.style.use('default')
@@ -50,10 +52,12 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
     if preprocessed_hints.get('league'):
         league = preprocessed_hints['league']
         if isinstance(league, list):
-            league = league[0]  # Take first league if multiple (highest priority)
-        df = df[df['League'] == league]
-        applied_filters.append(f"League: {league}")
-        print(f"[DEBUG] After league filter: {len(df)} players, shape: {df.shape}")
+            df = df[df['League'].isin(league)]
+            applied_filters.append(f"Leagues: {league}")
+        else:
+            df = df[df['League'] == league]
+            applied_filters.append(f"League: {league}")
+            print(f"[DEBUG] After multi-league filter: {len(df)} players, shape: {df.shape}, leagues: {league}")
         if df.empty:
             print("[DEBUG] DataFrame is EMPTY after league filter!")
     if preprocessed_hints.get('age_filter'):
@@ -250,6 +254,61 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
         stat_formula = preprocessed_hints.get('stat_formula')
         stat = preprocessed_hints.get('stat')
         computed_stat_col = None
+        league = preprocessed_hints.get('league')
+        # Multi-league support
+        if isinstance(league, list) and stat:
+            top_n = preprocessed_hints.get('top_n', 5)
+            league_results = {}
+            league_summaries = {}
+            for lg in league:
+                df_league = df[df['League'] == lg].copy()
+                if df_league.empty:
+                    print(f"[DEBUG] No data for league: {lg}")
+                    continue
+                # Compute the formula stat column for this league's DataFrame
+                if stat_formula:
+                    safe_expr = stat_formula['expr']
+                    display_expr = stat_formula.get('display_expr', safe_expr)
+                    safe_map = stat_formula.get('safe_map', {})
+                    local_env = {'safe_map': {}}
+                    for safe_var, col in safe_map.items():
+                        if col in df_league.columns:
+                            local_env['safe_map'][safe_var] = df_league[col]
+                        else:
+                            local_env['safe_map'][safe_var] = 0  # or np.nan
+                    try:
+                        df_league[display_expr] = eval(safe_expr, {"__builtins__": None}, local_env)
+                        stat_col = display_expr
+                        print(f"[DEBUG] Computed formula stat '{display_expr}' for league '{lg}'")
+                    except Exception as e:
+                        print(f"[DEBUG] Error computing formula stat for league {lg}: {e}")
+                        continue
+                else:
+                    stat_col = stat
+                try:
+                    top_players_df = sort_and_limit(df_league, stat_col, top_n)
+                    league_results[lg] = top_players_df.to_dict('records')
+                    # Compute summary for this league
+                    league_summaries[lg] = get_player_summary(df_league, stat_col)
+                    print(f"[DEBUG] Top {top_n} for league {lg}: {len(top_players_df)} players, summary: {league_summaries[lg]}")
+                except Exception as e:
+                    print(f"[DEBUG] Error computing top players for league {lg}: {e}")
+            def clean_json(obj):
+                if isinstance(obj, dict):
+                    return {k: clean_json(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [clean_json(v) for v in obj]
+                else:
+                    return to_python_type(obj)
+            return {
+                "success": True,
+                "multi_league": True,
+                "top_players_by_league": clean_json(league_results),
+                "summary_by_league": clean_json(league_summaries),
+                "applied_filters": applied_filters,
+                "count": len(df),
+                "stat": stat
+            }
         if stat_formula:
             safe_expr = stat_formula['expr']
             display_expr = stat_formula.get('display_expr', safe_expr)
