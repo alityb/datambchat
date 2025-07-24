@@ -251,7 +251,6 @@ def extract_stats(query: str) -> List[str]:
     # Robust correction pipeline for stat phrase
     all_aliases = list(alias_map.keys())
     corrected_stat = robust_correction(stat_phrase, all_aliases)
-    from difflib import get_close_matches
     matches = get_close_matches(corrected_stat, all_aliases, n=3, cutoff=0.6)
     print(f"[DEBUG] Fuzzy stat matches for phrase '{corrected_stat}': {matches}")
     if matches:
@@ -339,6 +338,12 @@ def preprocess_query(query: str) -> Dict[str, Any]:
             if age_match:
                 result["age_filter"] = {"op": "==", "value": int(age_match.group(1))}
 
+# --- U{number} shortcut for age filter (U23, U20, U27, etc.) ---
+    u_age_match = re.search(r"u-?(\d+)", lowered)
+    if u_age_match:
+        age_value = int(u_age_match.group(1))
+        result["age_filter"] = {"op": "<", "value": age_value}
+        print(f"[DEBUG] Detected 'U{age_value}' in query, setting age_filter to < {age_value}")
     # 3. Season/timeframe extraction
     season_match = re.search(r"(\d{4}/\d{2}|this season|last season)", lowered)
     if season_match:
