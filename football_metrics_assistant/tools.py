@@ -256,60 +256,99 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
         stat = preprocessed_hints.get('stat')
         computed_stat_col = None
         league = preprocessed_hints.get('league')
-        # Multi-league support
+        
+        # NEW: Multi-league support - but get overall top N, not top N per league
         if isinstance(league, list) and stat:
             top_n = preprocessed_hints.get('top_n', 5)
-            league_results = {}
-            league_summaries = {}
-            for lg in league:
-                df_league = df[df['League'] == lg].copy()
-                if df_league.empty:
-                    print(f"[DEBUG] No data for league: {lg}")
-                    continue
-                # Compute the formula stat column for this league's DataFrame
-                if stat_formula:
-                    safe_expr = stat_formula['expr']
-                    display_expr = stat_formula.get('display_expr', safe_expr)
-                    safe_map = stat_formula.get('safe_map', {})
-                    local_env = {'safe_map': {}}
-                    for safe_var, col in safe_map.items():
-                        if col in df_league.columns:
-                            local_env['safe_map'][safe_var] = df_league[col]
-                        else:
-                            local_env['safe_map'][safe_var] = 0  # or np.nan
-                    try:
-                        df_league[display_expr] = eval(safe_expr, {"__builtins__": None}, local_env)
-                        stat_col = display_expr
-                        print(f"[DEBUG] Computed formula stat '{display_expr}' for league '{lg}'")
-                    except Exception as e:
-                        print(f"[DEBUG] Error computing formula stat for league {lg}: {e}")
-                        continue
-                else:
-                    stat_col = stat
+            
+            # Compute the formula stat column ONCE for the entire dataset
+            if stat_formula:
+                safe_expr = stat_formula['expr']
+                display_expr = stat_formula.get('display_expr', safe_expr)
+                safe_map = stat_formula.get('safe_map', {})
+                columns = stat_formula['columns']
+                
+                # Check all columns exist
+                missing = [col for col in columns if col not in df.columns]
+                if missing:
+                    print(f"[DEBUG] Formula stat missing columns: {missing}")
+                    return {
+                        "error": f"Formula stat missing columns: {missing}",
+                        "applied_filters": applied_filters,
+                        "original_count": original_count
+                    }
+                
+                # Build a safe eval environment for the entire dataset
+                local_env = {'safe_map': {}}
+                for safe_var, col in safe_map.items():
+                    if col in df.columns:
+                        local_env['safe_map'][safe_var] = df[col]
+                    else:
+                        local_env['safe_map'][safe_var] = 0  # or np.nan
+                
                 try:
-                    top_players_df = sort_and_limit(df_league, stat_col, top_n)
-                    league_results[lg] = top_players_df.to_dict('records')
-                    # Compute summary for this league
-                    league_summaries[lg] = get_player_summary(df_league, stat_col)
-                    print(f"[DEBUG] Top {top_n} for league {lg}: {len(top_players_df)} players, summary: {league_summaries[lg]}")
+                    df[display_expr] = eval(safe_expr, {"__builtins__": None}, local_env)
+                    stat_col = display_expr
+                    print(f"[DEBUG] Computed formula stat '{display_expr}' for entire multi-league dataset")
                 except Exception as e:
-                    print(f"[DEBUG] Error computing top players for league {lg}: {e}")
-            def clean_json(obj):
-                if isinstance(obj, dict):
-                    return {k: clean_json(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [clean_json(v) for v in obj]
-                else:
-                    return to_python_type(obj)
-            return {
-                "success": True,
-                "multi_league": True,
-                "top_players_by_league": clean_json(league_results),
-                "summary_by_league": clean_json(league_summaries),
-                "applied_filters": applied_filters,
-                "count": len(df),
-                "stat": stat
-            }
+                    print(f"[DEBUG] Error computing formula stat: {e}")
+                    return {
+                        "error": f"Error computing formula stat: {e}",
+                        "applied_filters": applied_filters,
+                        "original_count": original_count
+                    }
+            else:
+                stat_col = stat
+            
+            # Now get the overall top N players across ALL leagues
+            try:
+                # Sort entire dataset and get top N
+                top_players_df = sort_and_limit(df, stat_col, top_n)
+                
+                # Convert to records and add league info
+                all_players = []
+                for _, player in top_players_df.iterrows():
+                    player_dict = player.to_dict()
+                    # Clean up the values
+                    player_dict = {k: to_python_type(v) for k, v in player_dict.items()}
+                    all_players.append(player_dict)
+                
+                # Build summary stats by league for context
+                league_summaries = {}
+                for lg in league:
+                    df_league = df[df['League'] == lg]
+                    if not df_league.empty:
+                        league_summaries[lg] = get_player_summary(df_league, stat_col)
+                
+                # Build overall summary
+                overall_summary = get_player_summary(df, stat_col)
+                
+                def clean_json(obj):
+                    if isinstance(obj, dict):
+                        return {k: clean_json(v) for k, v in obj.items()}
+                    elif isinstance(obj, list):
+                        return [clean_json(v) for v in obj]
+                    else:
+                        return to_python_type(obj)
+                
+                return {
+                    "success": True,
+                    "multi_league": True,
+                    "top_players": clean_json(all_players),  # Overall top N
+                    "summary": clean_json(overall_summary),  # Overall stats
+                    "summary_by_league": clean_json(league_summaries),  # League breakdowns for context
+                    "applied_filters": applied_filters,
+                    "count": len(df),
+                    "stat": stat_col
+                }
+                
+            except Exception as e:
+                print(f"[DEBUG] Error computing overall top players: {e}")
+                return {
+                    "error": f"Error computing top players: {e}",
+                    "applied_filters": applied_filters,
+                    "original_count": original_count
+                }
         if stat_formula:
             safe_expr = stat_formula['expr']
             display_expr = stat_formula.get('display_expr', safe_expr)
