@@ -335,6 +335,46 @@ def preprocess_query(query: str) -> Dict[str, Any]:
         found_stats = extract_stats(query)
         if found_stats:
             result["stat"] = found_stats[0] if len(found_stats) == 1 else found_stats
+    # --- PATCH: Single-stat forced mapping fallback ---
+    if (query_type in ("TOP_N", "FILTER")) and not result.get("stat"):
+        # Forced mapping for common stats
+        forced_map = {
+            'goals': 'Goals per 90',
+            'goal': 'Goals per 90',
+            'goals per 90': 'Goals per 90',
+            'goal per 90': 'Goals per 90',
+            'assists': 'Assists per 90',
+            'assist': 'Assists per 90',
+            'assists per 90': 'Assists per 90',
+            'assist per 90': 'Assists per 90',
+            'xg': 'xG per 90',
+            'xa': 'xA per 90',
+            'npxg': 'npxG per 90',
+        }
+        prefixes = ["most ", "top ", "highest ", "best "]
+        lowered_query = query.lower().strip()
+        for prefix in prefixes:
+            if lowered_query.startswith(prefix):
+                lowered_query = lowered_query[len(prefix):].strip()
+                break
+        # Try forced map
+        for forced, mapped in forced_map.items():
+            if re.search(rf"\b{re.escape(forced)}\b", lowered_query):
+                result["stat"] = mapped
+                print(f"[DEBUG] [PATCH] Single-stat fallback: '{forced}' mapped to '{mapped}'")
+                break
+        # If still not found, try alias map
+        if not result.get("stat"):
+            alias_map = get_alias_to_column_map()
+            # PATCH: Prefer the longest matching alias
+            best_alias = None
+            for alias in sorted(alias_map.keys(), key=len, reverse=True):
+                if re.search(rf"\b{re.escape(alias)}\\b", lowered_query):
+                    best_alias = alias
+                    break
+            if best_alias:
+                result["stat"] = alias_map[best_alias]
+                print(f"[DEBUG] [PATCH] Single-stat alias fallback: '{best_alias}' mapped to '{alias_map[best_alias]}'")
 
     # 5. Team extraction (using fuzzy matching)
     teams = get_all_teams()
