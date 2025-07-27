@@ -54,12 +54,13 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
         if isinstance(league, list):
             df = df[df['League'].isin(league)]
             applied_filters.append(f"Leagues: {league}")
+            print(f"[DEBUG] After multi-league filter: {len(df)} players, shape: {df.shape}, leagues: {league}")
         else:
             df = df[df['League'] == league]
             applied_filters.append(f"League: {league}")
-            print(f"[DEBUG] After multi-league filter: {len(df)} players, shape: {df.shape}, leagues: {league}")
-        if df.empty:
-            print("[DEBUG] DataFrame is EMPTY after league filter!")
+            print(f"[DEBUG] After league filter: {len(df)} players, shape: {df.shape}")
+            if df.empty:
+                print("[DEBUG] DataFrame is EMPTY after league filter!")
     if preprocessed_hints.get('age_filter'):
         age_filter = preprocessed_hints['age_filter']
         op = age_filter['op']
