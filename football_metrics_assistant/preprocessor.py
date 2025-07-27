@@ -118,20 +118,6 @@ def extract_stat_formula(query: str) -> dict:
     """
     alias_map = get_alias_to_column_map()
     stat_phrase = extract_stat_phrase(query)
-    # Check for common short stats first
-    lowered_phrase = stat_phrase.lower().strip()
-    if lowered_phrase in ['xg', 'xa', 'npxg', 'goals', 'assists', 'g', 'a']:
-        forced_map = {
-            'xg': 'xG per 90',
-            'xa': 'xA per 90', 
-            'npxg': 'npxG per 90',
-            'goals': 'Goals per 90',
-            'assists': 'Assists per 90',
-            'g': 'Goals per 90',
-            'a': 'Assists per 90'
-        }
-        if lowered_phrase in forced_map:
-            return [forced_map[lowered_phrase]]
     # Only consider the part before ' in ' or ' for ' for stat formulas
     stat_phrase = re.split(r' in | for ', stat_phrase)[0].strip()
     # Look for math operators
@@ -140,21 +126,8 @@ def extract_stat_formula(query: str) -> dict:
         print(f"[DEBUG] No math operator found in stat phrase: '{stat_phrase}'")
         return None
     # Split by operators, map each part
-# Split by operators, map each part
     parts = re.split(r'[+\-/*]', stat_phrase)
     print(f"[DEBUG] Formula parts: {parts}, ops: {ops}")
-
-    # Clean up parts - remove common prefixes like "top 10", "best 5", etc.
-    cleaned_parts = []
-    for part in parts:
-        part = part.strip()
-        # Remove common prefixes
-        part = re.sub(r'^(top|best)\s+\d+\s+', '', part, flags=re.IGNORECASE)
-        part = re.sub(r'^\d+\s+', '', part)  # Remove leading numbers
-        cleaned_parts.append(part.strip())
-
-    parts = cleaned_parts
-    print(f"[DEBUG] Cleaned formula parts: {parts}")    
     mapped_cols = []
     safe_vars = []
     safe_map = {}
@@ -183,6 +156,8 @@ def extract_stat_formula(query: str) -> dict:
                 part_lc = part_lc[len(prefix):].strip()
                 print(f"[DEBUG] Removed prefix '{prefix}' from '{orig_part_lc}' -> '{part_lc}'")
                 break
+        # PATCH: Remove leading numbers (e.g., '10 xg' -> 'xg')
+        part_lc = re.sub(r'^\d+\s*', '', part_lc)
         # Forced mapping check
         if part_lc in forced_map:
             mapped_col = forced_map[part_lc]
@@ -325,7 +300,6 @@ def preprocess_query(query: str) -> Dict[str, Any]:
     if top_match:
         result["top_n"] = int(top_match.group(1))
 
-    # 2. Age filter extraction
     age_match = re.search(r"under\s*(\d+)", lowered)
     if age_match:
         result["age_filter"] = {"op": "<", "value": int(age_match.group(1))}
