@@ -311,20 +311,20 @@ def preprocess_query(query: str) -> Dict[str, Any]:
             age_match = re.search(r"age\s*(\d+)", lowered)
             if age_match:
                 result["age_filter"] = {"op": "==", "value": int(age_match.group(1))}
+            else:
+                # NEW: Handle U25, U-25, U21, etc. patterns
+                u_age_match = re.search(r"u-?(\d+)", lowered)
+                if u_age_match:
+                    age_value = int(u_age_match.group(1))
+                    result["age_filter"] = {"op": "<", "value": age_value}
+                    print(f"[DEBUG] Detected 'U{age_value}' pattern, setting age_filter to < {age_value}")
 
-# --- U{number} shortcut for age filter (U23, U20, U27, etc.) ---
-    u_age_match = re.search(r"u-?(\d+)", lowered)
-    if u_age_match:
-        age_value = int(u_age_match.group(1))
-        result["age_filter"] = {"op": "<", "value": age_value}
-        print(f"[DEBUG] Detected 'U{age_value}' in query, setting age_filter to < {age_value}")
     # 3. Season/timeframe extraction
     season_match = re.search(r"(\d{4}/\d{2}|this season|last season)", lowered)
     if season_match:
         result["season"] = season_match.group(1)
 
     # 4. Stat/metric extraction (only for TOP_N or FILTER)
-    stat_formula = extract_stat_formula(query)
     stat_formula = extract_stat_formula(query)
     if stat_formula:
         result["stat_formula"] = stat_formula
@@ -379,8 +379,14 @@ def preprocess_query(query: str) -> Dict[str, Any]:
     # --- Remove age/irrelevant words from league phrases ---
     age_patterns = [r'under ?\d+', r'u-?\d+', r'over ?\d+', r'age ?\d+']
     def clean_league_phrase(phrase):
+        # Remove age patterns more broadly
+        age_patterns = [r'under ?\d+', r'u-?\d+', r'over ?\d+', r'age ?\d+']
         for pat in age_patterns:
             phrase = re.sub(pat, '', phrase, flags=re.IGNORECASE)
+        
+        # Remove other irrelevant words that might interfere
+        phrase = re.sub(r'\b(players?|best|top|most|highest)\b', '', phrase, flags=re.IGNORECASE)
+        
         return phrase.strip()
     for phrase in league_phrases:
         orig_phrase = phrase
