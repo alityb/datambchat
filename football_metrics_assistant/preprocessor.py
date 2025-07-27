@@ -440,9 +440,24 @@ def preprocess_query(query: str) -> Dict[str, Any]:
             print(f"[DEBUG] Normalized match: '{norm_phrase}' -> '{matched_league}'")
             found_leagues.append(matched_league)
             continue
-        # 2. Fuzzy match on normalized forms
+        # PATCH: Try matching last 3, 2, or 1 words as league
+        words = phrase.split()
+        matched = False
+        for n in range(3, 0, -1):
+            if len(words) >= n:
+                candidate = ' '.join(words[-n:])
+                norm_candidate = candidate.lower().replace(' ', '')
+                if norm_candidate in norm_league_map:
+                    matched_league = norm_league_map[norm_candidate]
+                    print(f"[DEBUG] Suffix match: '{norm_candidate}' -> '{matched_league}'")
+                    found_leagues.append(matched_league)
+                    matched = True
+                    break
+        if matched:
+            continue
+        # 2. Fuzzy match on normalized forms (PATCH: use higher cutoff 0.9)
         norm_leagues = list(norm_league_map.keys())
-        match = get_close_matches(norm_phrase, norm_leagues, n=1, cutoff=0.8)
+        match = get_close_matches(norm_phrase, norm_leagues, n=1, cutoff=0.9)
         if match:
             matched_league = norm_league_map[match[0]];
             print(f"[DEBUG] Fuzzy normalized match: '{norm_phrase}' -> '{matched_league}'")
