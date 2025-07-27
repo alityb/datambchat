@@ -28,6 +28,12 @@ def ask_llama(message: str, history: List[Dict] = None, model: str = "llama3.2:1
         return f"[Error] {str(e)}"
 
 def classify_query_type(query: str, model: str = "llama3.2:1b") -> str:
+    # Simple rule-based classification first
+    query_lower = query.lower()
+    if any(word in query_lower for word in ['top', 'best', 'highest', 'most']):
+        return "TOP_N"
+    if any(word in query_lower for word in ['how many', 'count', 'number of']):
+        return "COUNT"
     prompt = f"""
 Classify this football analytics question as one of:
 - COUNT: User wants a count of items (e.g., 'How many players in Serie A under 23?')
