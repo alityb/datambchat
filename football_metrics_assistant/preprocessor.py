@@ -576,6 +576,13 @@ def preprocess_query(query: str) -> Dict[str, Any]:
             result["stat"] = stat_phrase
             result["stat_op"] = stat_value_filter["stat_op"]
             result["stat_value"] = stat_value_filter["stat_value"]
+    
+    minutes_filter = extract_minutes_filter(query)
+    if minutes_filter:
+        result["minutes_op"] = minutes_filter["minutes_op"]
+        result["minutes_value"] = minutes_filter["minutes_value"]
+        print(f"[DEBUG] Extracted minutes filter: {minutes_filter['minutes_op']} {minutes_filter['minutes_value']}")
+
 
     # LLM fallback for stat/league extraction if missing or ambiguous
     ambiguous_league = not result.get("league") or (isinstance(result.get("league"), list) and len(result["league"]) > 3)
