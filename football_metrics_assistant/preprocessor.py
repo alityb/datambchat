@@ -286,6 +286,47 @@ def prioritize_leagues(matched_leagues):
         key=lambda x: priority.get(x, len(priority))
     )
 
+def extract_minutes_filter(query: str):
+    """Extract minutes played filters like '500+ minutes', 'more than 1000 minutes', etc."""
+    # Pattern: '500+ minutes' or '500 + minutes'
+    match = re.search(r"(\d+)\s*\+\s*minutes?", query.lower())
+    if match:
+        value = int(match.group(1))
+        return {"minutes_op": ">=", "minutes_value": value}
+    
+    # Pattern: 'more than 500 minutes'
+    match = re.search(r"more than (\d+) minutes?", query.lower())
+    if match:
+        value = int(match.group(1))
+        return {"minutes_op": ">", "minutes_value": value}
+    
+    # Pattern: 'at least 500 minutes'
+    match = re.search(r"at ?least (\d+) minutes?", query.lower())
+    if match:
+        value = int(match.group(1))
+        return {"minutes_op": ">=", "minutes_value": value}
+    
+    # Pattern: 'less than 500 minutes'
+    match = re.search(r"less than (\d+) minutes?", query.lower())
+    if match:
+        value = int(match.group(1))
+        return {"minutes_op": "<", "minutes_value": value}
+    
+    # Pattern: 'under 500 minutes'
+    match = re.search(r"under (\d+) minutes?", query.lower())
+    if match:
+        value = int(match.group(1))
+        return {"minutes_op": "<", "minutes_value": value}
+    
+    # Pattern: 'over 500 minutes'
+    match = re.search(r"over (\d+) minutes?", query.lower())
+    if match:
+        value = int(match.group(1))
+        return {"minutes_op": ">", "minutes_value": value}
+    
+    return None
+
+
 def preprocess_query(query: str) -> Dict[str, Any]:
     result = {"original": query}
     lowered = query.lower()
