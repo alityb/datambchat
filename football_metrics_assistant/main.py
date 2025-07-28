@@ -74,60 +74,90 @@ def chat(req: ChatRequest):
     
     # Add real data analysis if available
     if data_analysis and not data_analysis.get('error') and data_analysis.get('success'):
-        # NEW: Simplified multi-league logic - now we have overall top players
-        if data_analysis.get('multi_league', False):
-            # Get the overall top players (already sorted)
-            top_players = data_analysis.get('top_players', [])
-            stat_col = data_analysis.get('stat')
-            overall_summary = data_analysis.get('summary', {})
+        
+        query_type = preprocessed.get('query_type', '')
+        
+        # Handle COUNT queries specially
+        if query_type == 'COUNT':
+            count = data_analysis.get('count', 0)
+            applied_filters = data_analysis.get('applied_filters', [])
             
-            # Build combined table showing overall top N
-            table = None
-            if top_players:
-                table = f"| Rank | Player | Team | League | Position | Value |\n"
-                table += "|------|--------|------|--------|----------|-------|\n"
-                for i, player in enumerate(top_players, 1):
-                    player_name = player['Player']
-                    team = player['Team within selected timeframe']
-                    league = player.get('League', 'N/A')
-                    position = player.get('Position', 'N/A')
-                    stat_value = player.get(stat_col, 'N/A')
-                    if isinstance(stat_value, (int, float)):
-                        stat_value = f"{stat_value:.2f}"
-                    table += f"| {i} | {player_name} | {team} | {league} | {position} | {stat_value} |\n"
-                
-                total_players = data_analysis.get('count', 0)
-                leagues_list = preprocessed.get('league', [])
-                leagues_str = ', '.join(leagues_list) if isinstance(leagues_list, list) else str(leagues_list)
-                table += f"\nOverall top {len(top_players)} from {total_players} players across {leagues_str}."
+            # Build a descriptive summary
+            filter_descriptions = []
             
-            # Build summary for overall top player
-            summary = "No players found matching your criteria."
-            if top_players and stat_col:
-                top_player = top_players[0]
-                player_name = top_player['Player']
-                team = top_player['Team within selected timeframe']
-                league = top_player.get('League', 'N/A')
-                stat_value = top_player.get(stat_col, 'N/A')
-                if isinstance(stat_value, (int, float)):
-                    stat_value = f"{stat_value:.2f}"
-                
-                leagues_list = preprocessed.get('league', [])
-                leagues_str = ', '.join(leagues_list) if isinstance(leagues_list, list) else str(leagues_list)
-                
-                # Add age filter info if present
-                age_info = ""
-                if preprocessed.get('age_filter'):
-                    age_op = preprocessed['age_filter']['op']
-                    age_val = preprocessed['age_filter']['value']
-                    age_text = f"under {age_val}" if age_op == "<" else f"over {age_val}" if age_op == ">" else f"age {age_val}"
-                    age_info = f" ({age_text})"
-                
-                summary = f"{player_name} ({team}, {league}) has the highest {stat_col} among players{age_info} in {leagues_str} with {stat_value}."
+            # League info
+            league = preprocessed.get('league')
+            if league:
+                if isinstance(league, list):
+                    if len(league) > 1:
+                        filter_descriptions.append(f"in {', '.join(league)}")
+                    else:
+                        filter_descriptions.append(f"in {league[0]}")
+                else:
+                    filter_descriptions.append(f"in {league}")
+            
+            # Age filter info
+            age_filter = preprocessed.get('age_filter')
+            if age_filter:
+                op = age_filter['op']
+                value = age_filter['value']
+                if op == '<':
+                    filter_descriptions.append(f"under {value} years old")
+                elif op == '>':
+                    filter_descriptions.append(f"over {value} years old")
+                elif op == '==':
+                    filter_descriptions.append(f"aged {value}")
+            
+            # Minutes filter info
+            minutes_value = preprocessed.get('minutes_value')
+            minutes_op = preprocessed.get('minutes_op')
+            if minutes_value is not None:
+                if minutes_op == '>=':
+                    filter_descriptions.append(f"with {minutes_value}+ minutes")
+                elif minutes_op == '>':
+                    filter_descriptions.append(f"with more than {minutes_value} minutes")
+                elif minutes_op == '<':
+                    filter_descriptions.append(f"with less than {minutes_value} minutes")
+                elif minutes_op == '<=':
+                    filter_descriptions.append(f"with at most {minutes_value} minutes")
+            
+            # Stat value filter info
+            stat = preprocessed.get('stat')
+            stat_value = preprocessed.get('stat_value')
+            stat_op = preprocessed.get('stat_op')
+            if stat and stat_value is not None:
+                op_text = {
+                    '>=': 'at least',
+                    '>': 'more than',
+                    '<=': 'at most',
+                    '<': 'less than',
+                    '==': 'exactly'
+                }.get(stat_op, stat_op)
+                filter_descriptions.append(f"with {op_text} {stat_value} {stat}")
+            
+            # Position filter
+            position = preprocessed.get('position')
+            if position:
+                if isinstance(position, list):
+                    filter_descriptions.append(f"playing as {', '.join(position)}")
+                else:
+                    filter_descriptions.append(f"playing as {position}")
+            
+            # Team filter
+            team = preprocessed.get('team')
+            if team:
+                filter_descriptions.append(f"from {team}")
+            
+            # Build the final summary
+            if filter_descriptions:
+                filters_text = ' '.join(filter_descriptions)
+                summary = f"There are {count} players {filters_text}."
+            else:
+                summary = f"There are {count} players total."
             
             return {
                 "summary": summary,
-                "table": table,
+                "table": None,  # No table needed for count queries
                 "preprocessed": preprocessed,
                 "retrieval": {
                     "stat_definitions": len(stat_context),
