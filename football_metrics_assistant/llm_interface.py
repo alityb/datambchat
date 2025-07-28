@@ -1,5 +1,6 @@
 import requests
 from typing import List, Dict
+import re
 
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
 
@@ -28,12 +29,32 @@ def ask_llama(message: str, history: List[Dict] = None, model: str = "llama3.2:1
         return f"[Error] {str(e)}"
 
 def classify_query_type(query: str, model: str = "llama3.2:1b") -> str:
-    # Simple rule-based classification first
+    # Enhanced rule-based classification first
     query_lower = query.lower()
-    if any(word in query_lower for word in ['top', 'best', 'highest', 'most']):
+    
+    # Strong COUNT indicators
+    count_patterns = [
+        r'how many',
+        r'number of',
+        r'count of',
+        r'total.*players?',
+        r'how.*players?.*are',
+        r'players?.*with.*\d+\+',  # "players with 500+ minutes"
+        r'players?.*more than.*\d+',  # "players more than 500 minutes"
+        r'players?.*at least.*\d+',   # "players at least 500 minutes"
+        r'players?.*over.*\d+',       # "players over 500 minutes"
+        r'players?.*under.*\d+',      # "players under 500 minutes"
+        r'players?.*less than.*\d+',  # "players less than 500 minutes"
+    ]
+    
+    for pattern in count_patterns:
+        if re.search(pattern, query_lower):
+            return "COUNT"
+    
+    # Strong TOP_N indicators
+    if any(word in query_lower for word in ['top', 'best', 'highest', 'most']) and not any(word in query_lower for word in ['how many', 'number of']):
         return "TOP_N"
-    if any(word in query_lower for word in ['how many', 'count', 'number of']):
-        return "COUNT"
+    
     prompt = f"""
 Classify this football analytics question as one of:
 - COUNT: User wants a count of items (e.g., 'How many players in Serie A under 23?')
