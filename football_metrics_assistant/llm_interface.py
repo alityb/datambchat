@@ -51,6 +51,30 @@ def classify_query_type(query: str, model: str = "llama3.2:1b") -> str:
         if re.search(pattern, query_lower):
             return "COUNT"
     
+    # Add to the count_patterns list in classify_query_type
+    report_patterns = [
+        r'\w+\s+report',
+        r'report\s+on\s+\w+',
+        r'profile\s+of\s+\w+',
+        r'analysis\s+of\s+\w+'
+    ]
+
+    for pattern in report_patterns:
+        if re.search(pattern, query_lower):
+            return "PLAYER_REPORT"
+    # Add to the classify_query_type function, after the report_patterns check:
+    define_patterns = [
+        r'define\s+',
+        r'explain\s+',
+        r'\s+definition',
+        r'\s+meaning',
+        r'what\s+does\s+.*\s+mean',
+        r'how\s+is\s+.*\s+calculated'
+    ]
+
+    for pattern in define_patterns:
+        if re.search(pattern, query_lower):
+            return "STAT_DEFINITION"
     # Strong TOP_N indicators
     if any(word in query_lower for word in ['top', 'best', 'highest', 'most']) and not any(word in query_lower for word in ['how many', 'number of']):
         return "TOP_N"
