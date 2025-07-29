@@ -360,6 +360,20 @@ def preprocess_query(query: str) -> Dict[str, Any]:
                     result["age_filter"] = {"op": "<", "value": age_value}
                     print(f"[DEBUG] Detected 'U{age_value}' pattern, setting age_filter to < {age_value}")
 
+    # Add this after the query type classification
+    if re.search(r'\b(\w+(?:\s+\w+)*)\s+report\b', query.lower()):
+        player_match = re.search(r'\b(\w+(?:\s+\w+)*)\s+report\b', query.lower())
+        if player_match:
+            result["query_type"] = "PLAYER_REPORT"
+            player_name = player_match.group(1).strip()
+            # Find the actual player name using fuzzy matching
+            players = get_all_players()
+            found_players = fuzzy_find(player_name, players, threshold=0.7)
+            if found_players:
+                result["player"] = found_players[0]
+            else:
+                result["player"] = player_name
+
     # 3. Season/timeframe extraction
     season_match = re.search(r"(\d{4}/\d{2}|this season|last season)", lowered)
     if season_match:
@@ -469,6 +483,7 @@ def preprocess_query(query: str) -> Dict[str, Any]:
         phrase = re.sub(r'\b(players?|best|top|most|highest)\b', '', phrase, flags=re.IGNORECASE)
         
         return phrase.strip()
+    
     for phrase in league_phrases:
         orig_phrase = phrase
         phrase = clean_league_phrase(phrase)
