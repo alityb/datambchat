@@ -4,8 +4,9 @@ import requests
 from football_metrics_assistant.preprocessor import preprocess_query
 from football_metrics_assistant.retriever import HybridRetriever
 from football_metrics_assistant.llm_interface import ask_llama
-from football_metrics_assistant.tools import analyze_query  # Uncomment this to use real data
+from football_metrics_assistant.tools import analyze_query, generate_player_report  # Add generate_player_report
 import time
+import numpy as np
 
 app = FastAPI()
 
@@ -17,6 +18,156 @@ retriever = HybridRetriever()
 class ChatRequest(BaseModel):
     message: str
     history: list = []
+
+def to_python_type(val):
+    """Convert numpy types to Python native types for JSON serialization."""
+    if isinstance(val, np.generic):
+        val = val.item()
+    if isinstance(val, float):
+        if np.isnan(val) or np.isinf(val):
+            return None
+    return val
+
+def clean_dict_for_json(obj):
+    """Recursively clean a dict/list structure to ensure JSON serialization."""
+    if isinstance(obj, dict):
+        return {k: clean_dict_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [clean_dict_for_json(v) for v in obj]
+    else:
+        return to_python_type(obj)
+
+def format_stat_definition_response(definition_data: dict) -> dict:
+    """Format stat definition data for the frontend."""
+    
+    # Clean the definition data first
+    definition_data = clean_dict_for_json(definition_data)
+    
+    stat_name = definition_data['stat_name']
+    definition = definition_data['definition']
+    comparison_text = definition_data['comparison_text']
+    top_players = definition_data['top_players']
+    basic_stats = definition_data['basic_stats']
+    position_insights = definition_data['position_insights']
+    
+    # Build comprehensive summary
+    summary_parts = [
+        f"**{stat_name}**\n",
+        f"{definition}\n",
+        f"**Dataset Overview:**",
+        f"• Total players analyzed: {basic_stats['total_players']}",
+        f"• Average value: {basic_stats['mean']:.2f}",
+        f"• Range: {basic_stats['min']:.2f} to {basic_stats['max']:.2f}\n"
+    ]
+    
+    # Position insights
+    if position_insights:
+        summary_parts.append("**Best Positions for this Stat:**")
+        for i, pos_data in enumerate(position_insights, 1):
+            summary_parts.append(f"{i}. {pos_data['position']}: {pos_data['average']:.2f} average ({pos_data['player_count']} players)")
+        summary_parts.append("")
+    
+    # Top performers
+    if top_players:
+        summary_parts.append(f"**Top performers ({comparison_text} values):**")
+        for i, player in enumerate(top_players[:3], 1):
+            summary_parts.append(f"{i}. {player['name']} ({player['team']}) - {player['stat_value']:.2f}")
+        summary_parts.append("")
+    
+    # Build detailed table
+    table_rows = ["| Rank | Player | Team | League | Position | Age | Minutes | Value |"]
+    table_rows.append("|------|--------|------|--------|----------|-----|---------|-------|")
+    
+    for i, player in enumerate(top_players, 1):
+        name = player['name']
+        team = player['team']
+        league = player['league']
+        position = player['position']
+        age = player['age']
+        minutes = player['minutes']
+        value = f"{player['stat_value']:.2f}" if isinstance(player['stat_value'], (int, float)) else str(player['stat_value'])
+        
+        table_rows.append(f"| {i} | {name} | {team} | {league} | {position} | {age} | {minutes} | {value} |")
+    
+    return {
+        "summary": "\n".join(summary_parts),
+        "table": "\n".join(table_rows),
+        "preprocessed": {"query_type": "STAT_DEFINITION", "stat": stat_name},
+        "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+        "data_analysis": definition_data
+    }
+
+def format_player_report_response(report_data: dict) -> dict:
+    """Format player report data for the frontend."""
+    
+    # Clean the report data first
+    report_data = clean_dict_for_json(report_data)
+    
+    basic = report_data['basic_info']
+    league_comp = report_data['league_comparison']
+    
+    # Build comprehensive summary
+    summary_parts = [
+        f"**{basic['name']}** - {basic['position']} at {basic['team']} ({basic['league']})",
+        f"Age: {basic['age']} | Minutes: {basic['minutes_played']} | Matches: {basic['matches_played']}\n"
+    ]
+    
+    # League comparison
+    summary_parts.append(f"**League Performance ({basic['league']}):**")
+    summary_parts.append(f"Compared to {league_comp['position_peers']} {basic['position']}s in {basic['league']}\n")
+    
+    # Top 5 leagues comparison if available
+    if report_data.get('top5_comparison'):
+        top5_comp = report_data['top5_comparison']
+        summary_parts.append(f"**Top 5 Leagues Performance:**")
+        summary_parts.append(f"Compared to {top5_comp['total_players']} {basic['position']}s across {', '.join(top5_comp['leagues'])}\n")
+    
+    # Strengths
+    if report_data['strengths']:
+        summary_parts.append("**Key Strengths:**")
+        for strength in report_data['strengths'][:3]:
+            summary_parts.append(f"• {strength['stat']}: {strength['description']} ({strength['percentile']}th percentile)")
+        summary_parts.append("")
+    
+    # Weaknesses
+    if report_data['weaknesses']:
+        summary_parts.append("**Areas for Improvement:**")
+        for weakness in report_data['weaknesses'][:3]:
+            summary_parts.append(f"• {weakness['stat']}: {weakness['description']} ({weakness['percentile']}th percentile)")
+        summary_parts.append("")
+    
+    # Similar players
+    if report_data['similar_players']:
+        summary_parts.append("**Similar Players:**")
+        for player in report_data['similar_players'][:3]:
+            summary_parts.append(f"• {player['name']} ({player['team']}) - Age {player['age']}")
+    
+    # Build detailed table
+    table_rows = ["| Stat | Player Value | League Percentile | T5 Percentile |"]
+    table_rows.append("|------|--------------|------------------|---------------|")
+    
+    for stat in report_data['key_stats_analyzed']:
+        player_value = report_data['player_stats'].get(stat, 'N/A')
+        league_pct = report_data['league_comparison']['percentiles'].get(stat, 'N/A')
+        top5_pct = report_data.get('top5_percentiles', {}).get(stat, 'N/A')
+        
+        # Format values
+        if isinstance(player_value, (int, float)) and player_value != 'N/A':
+            player_value = f"{player_value:.2f}"
+        if isinstance(league_pct, (int, float)) and league_pct != 'N/A':
+            league_pct = f"{league_pct}%"
+        if isinstance(top5_pct, (int, float)) and top5_pct != 'N/A':
+            top5_pct = f"{top5_pct}%"
+            
+        table_rows.append(f"| {stat} | {player_value} | {league_pct} | {top5_pct} |")
+    
+    return {
+        "summary": "\n".join(summary_parts),
+        "table": "\n".join(table_rows),
+        "preprocessed": {"query_type": "PLAYER_REPORT", "player": basic['name']},
+        "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+        "data_analysis": report_data
+    }
 
 @app.get("/health")
 def health():
