@@ -178,6 +178,77 @@ def chat(req: ChatRequest):
     # 1. Preprocess the query for structured hints
     preprocessed = preprocess_query(req.message)
 
+    # Handle PLAYER_REPORT queries early
+    if preprocessed.get('query_type') == 'PLAYER_REPORT':
+        player_name = preprocessed.get('player')
+        if not player_name:
+            return {
+                "summary": "No player specified for report. Please specify a player name.",
+                "table": None,
+                "preprocessed": preprocessed,
+                "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+                "data_analysis": {"error": "No player specified"}
+            }
+        
+        try:
+            report_data = generate_player_report(player_name)
+            if report_data.get('success'):
+                return format_player_report_response(report_data)
+            else:
+                return {
+                    "summary": report_data.get('error', 'Failed to generate player report'),
+                    "table": None,
+                    "preprocessed": preprocessed,
+                    "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+                    "data_analysis": report_data
+                }
+        except Exception as e:
+            return {
+                "summary": f"Error generating player report: {str(e)}",
+                "table": None,
+                "preprocessed": preprocessed,
+                "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+                "data_analysis": {"error": str(e)}
+            }
+
+    # Handle STAT_DEFINITION queries early
+    if preprocessed.get('query_type') == 'STAT_DEFINITION':
+        stat_name = preprocessed.get('stat')
+        if not stat_name:
+            return {
+                "summary": "No statistic specified for definition. Please specify a statistic name.",
+                "table": None,
+                "preprocessed": preprocessed,
+                "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+                "data_analysis": {"error": "No statistic specified"}
+            }
+        
+        try:
+            from football_metrics_assistant.tools import generate_stat_definition_report
+            definition_data = generate_stat_definition_report(stat_name)
+            if definition_data.get('success'):
+                return format_stat_definition_response(definition_data)
+            else:
+                error_msg = definition_data.get('error', 'Failed to generate stat definition')
+                suggestions = definition_data.get('suggestions', [])
+                if suggestions:
+                    error_msg += f"\n\nDid you mean: {', '.join(suggestions)}?"
+                return {
+                    "summary": error_msg,
+                    "table": None,
+                    "preprocessed": preprocessed,
+                    "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+                    "data_analysis": definition_data
+                }
+        except Exception as e:
+            return {
+                "summary": f"Error generating stat definition: {str(e)}",
+                "table": None,
+                "preprocessed": preprocessed,
+                "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+                "data_analysis": {"error": str(e)}
+            }
+
     # 2. Retrieve stat definitions/context using preprocessed hints
     retrieval = retriever.retrieve(req.message, preprocessed_hints=preprocessed)
     stat_context = retrieval.get("stat_definitions", [])
@@ -201,6 +272,7 @@ def chat(req: ChatRequest):
             data_analysis = analyze_query(preprocessed)
         except Exception as e:
             data_analysis = {"error": f"Data analysis failed: {str(e)}"}
+    
     # 4. Compose context for LLM
     context_parts = []
     
@@ -315,8 +387,9 @@ def chat(req: ChatRequest):
                     "position_info": len(position_context),
                     "analysis_guides": len(analysis_context)
                 },
-                "data_analysis": data_analysis
+                "data_analysis": clean_dict_for_json(data_analysis)
             }
+        
         # Determine the correct stat column name for table and summary
         stat_col = None
         if 'stat_formula' in preprocessed:
@@ -328,12 +401,14 @@ def chat(req: ChatRequest):
             stat_col = preprocessed['stat']
         else:
             stat_col = ''
+        
         filtered_data = []
         # Prefer top_players if present, else filtered_data
         if data_analysis.get('top_players'):
             filtered_data = data_analysis['top_players']
         elif data_analysis.get('filtered_data'):
             filtered_data = data_analysis['filtered_data']
+        
         # Build the table
         table = None
         if filtered_data:
@@ -346,6 +421,7 @@ def chat(req: ChatRequest):
                 stat_value = player.get(stat_col, 'N/A')
                 table += f"| {i} | {player_name} | {team} | {position} | {stat_value} |\n"
             table += f"\nData based on {data_analysis.get('count', 0)} players matching your criteria."
+        
         # Unified summary logic
         if stat_col and filtered_data:
             # Sort by stat_col descending and get the top player
@@ -373,6 +449,7 @@ def chat(req: ChatRequest):
             summary = f"There are {data_analysis['count']} players in {league} with {op_str} {value} {stat_col}."
         else:
             summary = "No players found matching your criteria."
+        
         return {
             "summary": summary,
             "table": table,
@@ -382,7 +459,7 @@ def chat(req: ChatRequest):
                 "position_info": len(position_context),
                 "analysis_guides": len(analysis_context)
             },
-            "data_analysis": data_analysis if data_analysis else None
+            "data_analysis": clean_dict_for_json(data_analysis) if data_analysis else None
         }
     else:
         # For non-data queries or no results, return a clear message
@@ -395,10 +472,10 @@ def chat(req: ChatRequest):
                 "position_info": len(position_context),
                 "analysis_guides": len(analysis_context)
             },
-            "data_analysis": data_analysis if data_analysis else None
+            "data_analysis": clean_dict_for_json(data_analysis) if data_analysis else None
         }
 
 @app.get("/stat-definitions")
 def stat_definitions():
     # Placeholder for stat definitions endpoint 
-    return {"definitions": []} 
+    return {"definitions": []}
