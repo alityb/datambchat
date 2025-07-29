@@ -448,6 +448,218 @@ def get_player_summary(df: pd.DataFrame, stat: str) -> Dict[str, Any]:
     }
     
     return summary
+def get_player_percentiles(player_data: pd.Series, comparison_df: pd.DataFrame, stat_cols: List[str]) -> Dict[str, float]:
+    """
+    Calculate percentiles for a player compared to a comparison group.
+    """
+    percentiles = {}
+    for stat in stat_cols:
+        if stat in player_data.index and stat in comparison_df.columns:
+            player_value = player_data[stat]
+            if pd.notna(player_value):
+                # Calculate percentile (what % of players this player is better than)
+                percentile = (comparison_df[stat] < player_value).mean() * 100
+                percentiles[stat] = round(percentile, 1)
+    return percentiles
+
+def get_key_stats_for_position(position: str) -> List[str]:
+    """
+    Return key stats based on player position.
+    """
+    position_stats = {
+        'Goalkeeper': [
+            'Clean sheets', 'Saves per 90', 'Save percentage %.1', 
+            'xG conceded per 90', 'Passes per 90', 'Long passes per 90'
+        ],
+        'Centre-back': [
+            'Aerial duels won per 90', 'Clearances per 90', 'Blocks per 90',
+            'Interceptions per 90', 'Tackles per 90', 'Pass completion %.1',
+            'Progressive passes per 90', 'Poss+/-'
+        ],
+        'Full-back': [
+            'Tackles per 90', 'Interceptions per 90', 'Progressive passes per 90',
+            'Crosses per 90', 'Cross accuracy %.1', 'Assists per 90',
+            'Progressive carries per 90', 'Duels won %'
+        ],
+        'Midfielder': [
+            'Passes per 90', 'Pass completion %.1', 'Progressive passes per 90',
+            'Key passes per 90', 'Poss+/-', 'Tackles per 90',
+            'Interceptions per 90', 'Goals + Assists per 90'
+        ],
+        'Winger': [
+            'Goals per 90', 'Assists per 90', 'xG per 90', 'xA per 90',
+            'Dribbles attempted per 90', 'Dribble success rate %.1',
+            'Crosses per 90', 'Progressive carries per 90'
+        ],
+        'Striker': [
+            'Goals per 90', 'xG per 90', 'npxG per 90', 'Shots per 90',
+            'Shots on target %.1', 'Goals per xG', 'Assists per 90',
+            'Aerial duels won per 90'
+        ]
+    }
+    
+    # Default stats if position not found
+    default_stats = [
+        'Goals per 90', 'Assists per 90', 'xG per 90', 'xA per 90',
+        'Passes per 90', 'Pass completion %.1', 'Tackles per 90'
+    ]
+    
+    return position_stats.get(position, default_stats)
+
+def format_percentile_description(percentile: float) -> str:
+    """
+    Convert percentile to descriptive text.
+    """
+    if percentile >= 95:
+        return "Elite (Top 5%)"
+    elif percentile >= 90:
+        return "Excellent (Top 10%)"
+    elif percentile >= 75:
+        return "Above Average (Top 25%)"
+    elif percentile >= 50:
+        return "Average (Top 50%)"
+    elif percentile >= 25:
+        return "Below Average (Bottom 50%)"
+    else:
+        return "Poor (Bottom 25%)"
+
+def generate_player_report(player_name: str) -> Dict[str, Any]:
+    """
+    Generate a comprehensive player report with league and position comparisons.
+    """
+    df = load_data()
+    
+    # Find the player
+    player_data = df[df['Player'] == player_name]
+    if player_data.empty:
+        return {"error": f"Player '{player_name}' not found in database"}
+    
+    # Get the most recent/relevant record for the player
+    player_record = player_data.iloc[0]
+    
+    # Basic info
+    basic_info = {
+        "name": player_record['Player'],
+        "team": player_record.get('Team within selected timeframe', 'Unknown'),
+        "league": player_record.get('League', 'Unknown'),
+        "position": player_record.get('Position', 'Unknown'),
+        "age": player_record.get('Age', 'Unknown'),
+        "minutes_played": player_record.get('Minutes played', 0),
+        "matches_played": player_record.get('Matches played', 0)
+    }
+    
+    # Get key stats for the player's position
+    key_stats = get_key_stats_for_position(basic_info['position'])
+    
+    # Filter to only include stats that exist in the dataset
+    available_stats = [stat for stat in key_stats if stat in df.columns]
+    
+    # Player's key stats
+    player_stats = {}
+    for stat in available_stats:
+        value = player_record.get(stat)
+        if pd.notna(value):
+            player_stats[stat] = to_python_type(value)
+    
+    # League comparison (players in same league and position)
+    league_comparison_df = df[
+        (df['League'] == basic_info['league']) & 
+        (df['Position'] == basic_info['position']) &
+        (df['Minutes played'] >= 270)  # Minimum minutes filter
+    ]
+    
+    league_percentiles = get_player_percentiles(player_record, league_comparison_df, available_stats)
+    
+    # Top 5 leagues comparison (if player is in a top 5 league)
+    top5_leagues = ["Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1"]
+    top5_comparison = None
+    top5_percentiles = {}
+    
+    if basic_info['league'] in top5_leagues:
+        top5_comparison_df = df[
+            (df['League'].isin(top5_leagues)) & 
+            (df['Position'] == basic_info['position']) &
+            (df['Minutes played'] >= 270)
+        ]
+        top5_percentiles = get_player_percentiles(player_record, top5_comparison_df, available_stats)
+        top5_comparison = {
+            "total_players": len(top5_comparison_df),
+            "leagues": top5_leagues
+        }
+    
+    # Position comparison within league
+    position_peers = league_comparison_df[league_comparison_df['Position'] == basic_info['position']]
+    
+    # Find similar players (same position, similar age range)
+    age = basic_info.get('age', 25)
+    similar_players_df = df[
+        (df['Position'] == basic_info['position']) &
+        (df['League'] == basic_info['league']) &
+        (df['Age'].between(age - 3, age + 3)) &
+        (df['Minutes played'] >= 270) &
+        (df['Player'] != player_name)  # Exclude the player themselves
+    ]
+    
+    # Get top 5 similar players based on a composite score
+    similar_players = []
+    if not similar_players_df.empty and len(available_stats) > 0:
+        # Use Goals + Assists for attacking players, Poss+/- for others
+        if basic_info['position'] in ['Striker', 'Winger']:
+            sort_stat = 'Goals + Assists per 90' if 'Goals + Assists per 90' in available_stats else available_stats[0]
+        else:
+            sort_stat = 'Poss+/-' if 'Poss+/-' in available_stats else available_stats[0]
+        
+        top_similar = similar_players_df.nlargest(5, sort_stat) if sort_stat in similar_players_df.columns else similar_players_df.head(5)
+        
+        for _, similar_player in top_similar.iterrows():
+            similar_players.append({
+                "name": similar_player['Player'],
+                "team": similar_player.get('Team within selected timeframe', 'Unknown'),
+                "age": to_python_type(similar_player.get('Age', 'Unknown')),
+                "key_stat_value": to_python_type(similar_player.get(sort_stat, 0))
+            })
+    
+    # Strengths and weaknesses analysis
+    strengths = []
+    weaknesses = []
+    
+    for stat, percentile in league_percentiles.items():
+        if percentile >= 80:
+            strengths.append({
+                "stat": stat,
+                "value": player_stats.get(stat, 0),
+                "percentile": percentile,
+                "description": format_percentile_description(percentile)
+            })
+        elif percentile <= 20:
+            weaknesses.append({
+                "stat": stat,
+                "value": player_stats.get(stat, 0),
+                "percentile": percentile,
+                "description": format_percentile_description(percentile)
+            })
+    
+    # Sort strengths and weaknesses by percentile
+    strengths.sort(key=lambda x: x['percentile'], reverse=True)
+    weaknesses.sort(key=lambda x: x['percentile'])
+    
+    return {
+        "success": True,
+        "basic_info": basic_info,
+        "player_stats": player_stats,
+        "league_comparison": {
+            "league": basic_info['league'],
+            "total_players": len(league_comparison_df),
+            "position_peers": len(position_peers),
+            "percentiles": league_percentiles
+        },
+        "top5_comparison": top5_comparison,
+        "top5_percentiles": top5_percentiles,
+        "strengths": strengths[:5],  # Top 5 strengths
+        "weaknesses": weaknesses[:5],  # Top 5 weaknesses
+        "similar_players": similar_players,
+        "key_stats_analyzed": available_stats
+    }
 
 def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
     """
