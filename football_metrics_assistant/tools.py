@@ -840,6 +840,29 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                 "count": len(df),
                 "applied_filters": applied_filters
             }
+        # Add this after the other query_type conditions in analyze_query()
+        elif query_type == 'PLAYER_REPORT':
+            player_name = preprocessed_hints.get('player')
+            if not player_name:
+                return {
+                    "error": "No player specified for report",
+                    "applied_filters": applied_filters,
+                    "count": len(df)
+                }
+            
+            return generate_player_report(player_name)
+        elif query_type == 'STAT_DEFINITION':
+            stat_name = preprocessed_hints.get('stat')
+            if not stat_name:
+                return {
+                    "error": "No statistic specified for definition",
+                    "applied_filters": applied_filters,
+                    "count": len(df)
+                }
+            
+            return generate_stat_definition_report(stat_name)
+
+
         elif query_type in ('TOP_N', 'FILTER'):
             # Get stat for analysis
             if not stat:
