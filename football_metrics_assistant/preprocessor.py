@@ -559,6 +559,60 @@ def preprocess_query(query: str) -> Dict[str, Any]:
             print(f"[DEBUG] All matched leagues: {found_leagues}")
         else:
             result["league"] = None
+    # Stat definition detection
+    define_patterns = [
+        r'define\s+(.+)',
+        r'what\s+is\s+(.+)',
+        r'explain\s+(.+)',
+        r'(.+)\s+definition',
+        r'(.+)\s+meaning',
+        r'how\s+is\s+(.+)\s+calculated',
+        r'what\s+does\s+(.+)\s+mean'
+    ]
+
+    for pattern in define_patterns:
+        match = re.search(pattern, query.lower())
+        if match:
+            result["query_type"] = "STAT_DEFINITION"
+            stat_phrase = match.group(1).strip()
+            
+            # Clean up common words from the stat phrase
+            clean_words = ['statistic', 'stat', 'metric', 'the', 'a', 'an']
+            for word in clean_words:
+                stat_phrase = re.sub(rf'\b{word}\b', '', stat_phrase, flags=re.IGNORECASE).strip()
+            
+            # Try to match to an actual stat column using alias mapping
+            alias_map = get_alias_to_column_map()
+            
+            # Direct match
+            if stat_phrase in alias_map:
+                result["stat"] = alias_map[stat_phrase]
+                break
+            
+            # Normalized match
+            norm_phrase = normalize_colname(stat_phrase)
+            if norm_phrase in alias_map:
+                result["stat"] = alias_map[norm_phrase]
+                break
+            
+            # Fuzzy match
+            all_aliases = list(alias_map.keys())
+            matches = get_close_matches(norm_phrase, all_aliases, n=1, cutoff=0.7)
+            if matches:
+                result["stat"] = alias_map[matches[0]]
+                break
+            
+            # Substring match
+            for alias, col in alias_map.items():
+                if norm_phrase in alias or alias in norm_phrase:
+                    result["stat"] = col
+                    break
+            
+            # If no match found, store the original phrase
+            if "stat" not in result:
+                result["stat"] = stat_phrase
+            
+            break
 
     # --- Custom league aliases for top 5/7 leagues ---
     top5_leagues = ["Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1"]
