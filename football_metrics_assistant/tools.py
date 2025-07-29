@@ -242,6 +242,190 @@ def generate_chart(df: pd.DataFrame, stat: str, top_n: int = 5, chart_type: str 
     
     return fig, description
 
+def get_stat_definition_text(stat_name: str) -> str:
+    """
+    Get a simple explanation of what a stat means.
+    """
+    # Comprehensive stat definitions
+    stat_definitions = {
+        # Attacking stats
+        'Goals per 90': 'The average number of goals a player scores per 90 minutes of play. This is the primary measure of a striker\'s finishing ability.',
+        'Assists per 90': 'The average number of assists a player provides per 90 minutes. An assist is recorded when a player makes the final pass before a teammate scores.',
+        'xG per 90': 'Expected Goals per 90 minutes. This measures the quality of scoring chances a player gets, based on factors like shot distance, angle, and defensive pressure. Higher values indicate better positioning and chance creation.',
+        'xA per 90': 'Expected Assists per 90 minutes. This measures the quality of passes a player makes that lead to shots, regardless of whether the shot results in a goal.',
+        'npxG per 90': 'Non-Penalty Expected Goals per 90 minutes. This is xG excluding penalty kicks, giving a better measure of open-play scoring ability.',
+        'Goals + Assists per 90': 'Combined goals and assists per 90 minutes. This measures a player\'s total direct contribution to their team\'s scoring.',
+        'Shots per 90': 'The average number of shots a player takes per 90 minutes, including both on-target and off-target attempts.',
+        'Shots on target %.1': 'The percentage of a player\'s shots that are on target (would go in the goal if not saved). Higher percentages indicate better shot accuracy.',
+        'Goals per xG': 'The ratio of actual goals scored to expected goals. Values above 1.0 suggest clinical finishing, while below 1.0 may indicate poor finishing or bad luck.',
+        'npxG/Shot': 'Non-penalty expected goals per shot. This measures the average quality of a player\'s shooting chances.',
+        'xG/Shot': 'Expected goals per shot. This indicates how good the average quality of a player\'s shots are.',
+        
+        # Passing stats
+        'Passes per 90': 'The average number of passes a player completes per 90 minutes. Higher values often indicate involvement in team build-up play.',
+        'Pass completion %.1': 'The percentage of passes that reach a teammate successfully. Higher percentages indicate more accurate passing.',
+        'Key passes per 90': 'Passes that directly lead to a shot attempt by a teammate per 90 minutes. This measures chance creation ability.',
+        'Progressive passes per 90': 'Passes that move the ball significantly closer to the opponent\'s goal (typically 10+ meters forward) per 90 minutes.',
+        'Long passes per 90': 'Long-distance passes (typically 25+ meters) attempted per 90 minutes, often used to switch play or find forwards.',
+        'Through passes per 90': 'Passes played behind the defensive line to a teammate per 90 minutes. These are particularly dangerous attacking passes.',
+        'Cross accuracy %.1': 'The percentage of crosses that reach a teammate. Higher values indicate better crossing ability.',
+        'Crosses per 90': 'The average number of crosses a player attempts per 90 minutes, typically from wide positions.',
+        
+        # Defensive stats
+        'Tackles per 90': 'The average number of tackles a player makes per 90 minutes. This includes both successful challenges for the ball.',
+        'Sliding tackles per 90': 'The average number of sliding tackles attempted per 90 minutes. This indicates aggressive defensive play.',
+        'Interceptions per 90': 'Times per 90 minutes a player intercepts an opponent\'s pass. This shows defensive awareness and positioning.',
+        'Clearances per 90': 'Defensive actions per 90 minutes where a player kicks, heads, or throws the ball away from their defensive area.',
+        'Blocks per 90': 'Times per 90 minutes a player blocks an opponent\'s shot or pass with their body.',
+        'Aerial duels per 90': 'Aerial challenges per 90 minutes, important for defenders and strikers in winning headers.',
+        'Aerial duels won per 90': 'Aerial challenges won per 90 minutes. Shows dominance in the air.',
+        'Defensive duels per 90': 'One-on-one defensive challenges per 90 minutes, including tackles and physical contests.',
+        'Duels won %': 'Percentage of all duels (aerial, defensive, offensive) that a player wins. Higher values indicate physical dominance.',
+        
+        # Possession stats
+        'Touches per 90': 'The total number of times a player touches the ball per 90 minutes. Higher values indicate more involvement in play.',
+        'Poss+/-': 'Possession Plus/Minus. The difference between possessions won and lost per 90 minutes. Positive values help team keep the ball.',
+        'Ball-carrying frequency': 'How often a player carries the ball forward during their possessions.',
+        'Progressive carries per 90': 'Times per 90 minutes a player carries the ball significantly forward (typically 5+ meters toward goal).',
+        'Dribbles attempted per 90': 'Number of times per 90 minutes a player attempts to beat an opponent with the ball.',
+        'Dribble success rate %.1': 'Percentage of dribble attempts that are successful. Higher values indicate better 1v1 ability.',
+        
+        # Goalkeeper stats
+        'Clean sheets': 'Number of matches where the goalkeeper\'s team doesn\'t concede a goal while they\'re playing.',
+        'Saves per 90': 'Average number of saves a goalkeeper makes per 90 minutes.',
+        'Save percentage %.1': 'Percentage of shots on target that the goalkeeper saves. Higher values indicate better shot-stopping.',
+        'xG conceded per 90': 'Expected goals conceded per 90 minutes based on the quality of shots faced.',
+        
+        # Physical stats
+        'Fouls suffered per 90': 'Number of times per 90 minutes a player is fouled by opponents.',
+        'Yellow cards': 'Total number of yellow cards received by the player.',
+        'Red cards': 'Total number of red cards received by the player.',
+        
+        # Match info
+        'Minutes played': 'Total minutes the player has been on the field.',
+        'Matches played': 'Total number of matches the player has appeared in.',
+        'Age': 'The player\'s current age.',
+        
+        # Advanced stats
+        'Performance Index': 'A composite score that evaluates overall player performance across multiple metrics.',
+        'Progressive actions per 90': 'Combined progressive passes and carries per 90 minutes. Measures forward ball progression.',
+        'Shot assists per 90': 'Passes that lead to a shot (but not necessarily on target) per 90 minutes.',
+        'Deep completions per 90': 'Successful passes into the opponent\'s penalty area per 90 minutes.',
+        'Exit line': 'A defensive metric measuring how effectively a player prevents opponents from progressing into dangerous areas.',
+    }
+    
+    # Try exact match first
+    if stat_name in stat_definitions:
+        return stat_definitions[stat_name]
+    
+    # Try case-insensitive match
+    for stat, definition in stat_definitions.items():
+        if stat.lower() == stat_name.lower():
+            return stat_definitions[stat]
+    
+    # Try partial match
+    for stat, definition in stat_definitions.items():
+        if stat_name.lower() in stat.lower() or stat.lower() in stat_name.lower():
+            return stat_definitions[stat]
+    
+    # Default explanation
+    return f"This statistic measures a specific aspect of player performance. The exact calculation may vary, but it provides insight into the player's contribution in this area."
+
+def generate_stat_definition_report(stat_name: str) -> Dict[str, Any]:
+    """
+    Generate a comprehensive stat definition report with explanation and top players.
+    """
+    df = load_data()
+    
+    # Check if stat exists in the dataset
+    if stat_name not in df.columns:
+        # Try to find similar stat names
+        from difflib import get_close_matches
+        similar_stats = get_close_matches(stat_name, df.columns, n=3, cutoff=0.6)
+        return {
+            "error": f"Statistic '{stat_name}' not found in dataset.",
+            "suggestions": similar_stats if similar_stats else []
+        }
+    
+    # Get definition
+    definition = get_stat_definition_text(stat_name)
+    
+    # Filter out players with insufficient minutes and NaN values
+    filtered_df = df[
+        (df['Minutes played'] >= 270) &  # Minimum minutes filter
+        (df[stat_name].notna())  # Remove NaN values
+    ].copy()
+    
+    if filtered_df.empty:
+        return {
+            "error": f"No players found with valid data for {stat_name}",
+            "definition": definition
+        }
+    
+    # Determine if higher or lower values are better
+    ascending_stats = ['Age', 'Minutes played', 'Matches played', 'Yellow cards', 'Red cards', 'xG conceded per 90']
+    ascending = stat_name in ascending_stats
+    
+    # Get top 10 players for this stat
+    if ascending:
+        top_players_df = filtered_df.nsmallest(10, stat_name)
+        comparison_text = "lowest"
+    else:
+        top_players_df = filtered_df.nlargest(10, stat_name)
+        comparison_text = "highest"
+    
+    # Build player list with relevant info
+    top_players = []
+    for _, player in top_players_df.iterrows():
+        player_info = {
+            "name": player['Player'],
+            "team": player.get('Team within selected timeframe', 'Unknown'),
+            "league": player.get('League', 'Unknown'),
+            "position": player.get('Position', 'Unknown'),
+            "age": to_python_type(player.get('Age', 'Unknown')),
+            "minutes": to_python_type(player.get('Minutes played', 0)),
+            "matches": to_python_type(player.get('Matches played', 0)),
+            "stat_value": to_python_type(player.get(stat_name, 0))
+        }
+        top_players.append(player_info)
+    
+    # Calculate some basic stats about this metric
+    stat_values = filtered_df[stat_name]
+    basic_stats = {
+        "total_players": len(filtered_df),
+        "mean": to_python_type(stat_values.mean()),
+        "median": to_python_type(stat_values.median()),
+        "std": to_python_type(stat_values.std()),
+        "min": to_python_type(stat_values.min()),
+        "max": to_python_type(stat_values.max())
+    }
+    
+    # Position breakdown - which positions excel in this stat
+    position_breakdown = filtered_df.groupby('Position')[stat_name].agg(['mean', 'count']).round(2)
+    position_breakdown = position_breakdown[position_breakdown['count'] >= 5]  # Only positions with 5+ players
+    if not ascending:
+        position_breakdown = position_breakdown.sort_values('mean', ascending=False)
+    else:
+        position_breakdown = position_breakdown.sort_values('mean', ascending=True)
+    
+    position_insights = []
+    for pos, data in position_breakdown.head(3).iterrows():
+        position_insights.append({
+            "position": pos,
+            "average": to_python_type(data['mean']),
+            "player_count": to_python_type(data['count'])
+        })
+    
+    return {
+        "success": True,
+        "stat_name": stat_name,
+        "definition": definition,
+        "comparison_text": comparison_text,
+        "top_players": top_players,
+        "basic_stats": basic_stats,
+        "position_insights": position_insights
+    }
+
 def get_player_summary(df: pd.DataFrame, stat: str) -> Dict[str, Any]:
     """
     Get summary statistics for a given stat.
@@ -422,6 +606,7 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                     "original_count": original_count
                 }
         # --- End formula stat computation ---
+        
 
         if query_type == 'COUNT' or query_type == 'FILTER':
             # Always include filtered_data for table rendering
