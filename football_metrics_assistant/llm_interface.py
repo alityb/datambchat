@@ -31,6 +31,19 @@ def ask_llama(message: str, history: List[Dict] = None, model: str = "llama3.2:1
 def classify_query_type(query: str, model: str = "llama3.2:1b") -> str:
     # Enhanced rule-based classification first
     query_lower = query.lower()
+
+    top_n_patterns = [
+        r'top\s+\d+',
+        r'best\s+\d+',
+        r'highest.*by',
+        r'most.*by',
+        r'top.*players.*by',
+        r'best.*players.*by'
+    ]
+    for pattern in top_n_patterns:
+        if re.search(pattern, query_lower):
+            return "TOP_N"
+
     
     # Strong COUNT indicators
     count_patterns = [
