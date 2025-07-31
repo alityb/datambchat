@@ -214,7 +214,8 @@ def extract_stat_formula(query: str) -> dict:
         if i < len(ops):
             safe_expr += ops[i]
             display_expr += ops[i]
-    print(f"[DEBUG] Formula safe_expr: {safe_expr}, display_expr: {display_expr}, mapped_cols: {mapped_cols}")
+
+    print(f"[DEBUG] Final formula - safe_expr: {safe_expr}, display_expr: {display_expr}")
     return {'expr': safe_expr, 'display_expr': display_expr, 'columns': mapped_cols, 'ops': ops, 'safe_map': safe_map}
 
 def extract_stats(query: str) -> List[str]:
