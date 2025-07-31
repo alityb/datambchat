@@ -113,102 +113,99 @@ def extract_stat_phrase(query: str) -> str:
 
 def extract_stat_formula(query: str) -> dict:
     """
-    Detects and parses stat formulas like 'xg/xa', 'goals + assists', 'xg - xa', 'xA + xG', 'Sliding tackles per 90 + progressive passes per 90'.
-    Returns a dict with the formula expression (safe for eval), mapped columns, display expr, and operators.
+    Detects and parses stat formulas with improved mapping accuracy.
     """
     alias_map = get_alias_to_column_map()
     stat_phrase = extract_stat_phrase(query)
-    # Only consider the part before ' in ' or ' for ' for stat formulas
     stat_phrase = re.split(r' in | for ', stat_phrase)[0].strip()
+    
     # Look for math operators
     ops = re.findall(r'[+\-/*]', stat_phrase)
     if not ops:
-        print(f"[DEBUG] No math operator found in stat phrase: '{stat_phrase}'")
         return None
+
     # Split by operators, map each part
     parts = re.split(r'[+\-/*]', stat_phrase)
     print(f"[DEBUG] Formula parts: {parts}, ops: {ops}")
+    
     mapped_cols = []
     safe_vars = []
     safe_map = {}
-    # Forced mapping for goals/assists (singular/plural)
+    
+    # IMPROVED: More precise forced mapping
     forced_map = {
         'goals': 'Goals per 90',
         'goal': 'Goals per 90',
-        'goals per 90': 'Goals per 90',
-        'goal per 90': 'Goals per 90',
-        'assists': 'Assists per 90',
+        'assists': 'Assists per 90', 
         'assist': 'Assists per 90',
-        'assists per 90': 'Assists per 90',
-        'assist per 90': 'Assists per 90',
         'xg': 'xG per 90',
         'xa': 'xA per 90',
         'npxg': 'npxG per 90',
+        'expected goals': 'xG per 90',
+        'expected assists': 'xA per 90',
+        # Add ratios
+        'goals per xg': 'Goals per xG',
+        'assists per xa': 'Assists per xA',
     }
+    
     prefixes = ["most ", "top ", "highest ", "best "]
+    
     for part in parts:
         part = part.strip()
         part_lc = part.lower().strip()
-        # Remove common prefixes
-        orig_part_lc = part_lc
+        
+        # Remove prefixes
         for prefix in prefixes:
             if part_lc.startswith(prefix):
                 part_lc = part_lc[len(prefix):].strip()
-                print(f"[DEBUG] Removed prefix '{prefix}' from '{orig_part_lc}' -> '{part_lc}'")
                 break
-        # PATCH: Remove leading numbers (e.g., '10 xg' -> 'xg')
+                
+        # Remove leading numbers
         part_lc = re.sub(r'^\d+\s*', '', part_lc)
-        # Forced mapping check
-        if part_lc in forced_map:
-            mapped_col = forced_map[part_lc]
-            print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' forced-mapped to '{mapped_col}' (forced map)")
-        elif part_lc == 'goals per 90':
-            mapped_col = 'Goals per 90'
-            print(f"[DEBUG] Formula part '{part}' direct-mapped to 'Goals per 90'")
-        elif part_lc == 'assists per 90':
-            mapped_col = 'Assists per 90'
-            print(f"[DEBUG] Formula part '{part}' direct-mapped to 'Assists per 90'")
-        else:
-            # 1. Try exact alias match (case-insensitive)
-            norm_part = part_lc.replace(' ', '').replace('-', '').replace('+', 'plus').replace('/', '').replace('(', '').replace(')', '')
+        
+        print(f"[DEBUG] Processing formula part: '{part}' -> '{part_lc}'")
+        
+        # IMPROVED: Try exact forced mapping first
+        mapped_col = None
+        for forced_key, forced_col in forced_map.items():
+            if part_lc == forced_key or forced_key in part_lc:
+                mapped_col = forced_col
+                print(f"[DEBUG] Forced mapping: '{part_lc}' -> '{mapped_col}'")
+                break
+        
+        if not mapped_col:
+            # Try exact alias match
+            norm_part = normalize_colname(part_lc)
             if norm_part in alias_map:
                 mapped_col = alias_map[norm_part]
-                print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' mapped to '{mapped_col}' via exact alias match '{norm_part}'")
+                print(f"[DEBUG] Exact alias match: '{norm_part}' -> '{mapped_col}'")
             else:
-                # 2. Try robust_correction and fuzzy match
-                all_aliases = list(alias_map.keys())
-                corrected = robust_correction(part_lc, all_aliases)
-                match = get_close_matches(corrected, all_aliases, n=1, cutoff=0.8)  # stricter cutoff
-                if match and alias_map[match[0]].lower().startswith('x'):
-                    mapped_col = alias_map[match[0]]
-                    print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' mapped to '{mapped_col}' via fuzzy match '{match[0]}'")
-                else:
-                    # 3. General substring match (all stats)
-                    sub_matches = [col for alias, col in alias_map.items() if norm_part in alias.lower()]
-                    if sub_matches:
-                        mapped_col = sub_matches[0]
-                        print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' mapped to '{mapped_col}' via general substring match")
-                    else:
-                        # 4. LLM fallback
-                        try:
-                            from football_metrics_assistant.llm_interface import ask_llama
-                            llm_prompt = f"Given the following stat columns: {list(set(alias_map.values()))}\nWhich column best matches the user phrase: '{part}'? Respond with the exact column name only."
-                            llm_col = ask_llama(llm_prompt).strip()
-                            if llm_col in alias_map.values():
-                                mapped_col = llm_col
-                                print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' mapped to '{mapped_col}' via LLM fallback")
-                            else:
-                                mapped_col = part
-                                print(f"[DEBUG] Formula part '{part}' normalized to '{part_lc}' could not be mapped, using as is (even after LLM fallback)")
-                        except Exception as e:
-                            mapped_col = part
-                            print(f"[DEBUG] LLM fallback failed for '{part}': {e}")
+                # IMPROVED: Stricter fuzzy matching - only for xG/xA type stats
+                if any(x in part_lc for x in ['xg', 'xa', 'npxg', 'expected']):
+                    corrected = robust_correction(part_lc, list(alias_map.keys()))
+                    match = get_close_matches(corrected, list(alias_map.keys()), n=1, cutoff=0.9)  # Higher cutoff
+                    if match:
+                        mapped_col = alias_map[match[0]]
+                        print(f"[DEBUG] Strict fuzzy match for xG/xA: '{part_lc}' -> '{mapped_col}'")
+                
+                if not mapped_col:
+                    # Last resort: direct column name search
+                    for col_name in alias_map.values():
+                        if part_lc in col_name.lower() or col_name.lower().startswith(part_lc):
+                            mapped_col = col_name
+                            print(f"[DEBUG] Direct column search: '{part_lc}' -> '{mapped_col}'")
+                            break
+        
+        if not mapped_col:
+            print(f"[DEBUG] WARNING: Could not map formula part '{part_lc}', using as-is")
+            mapped_col = part
+            
         mapped_cols.append(mapped_col)
-        # Build safe variable name
         safe_var = mapped_col.replace(' ', '_').replace('.', '_').replace('%', 'pct').replace('(', '').replace(')', '').replace('-', '_').replace('+', 'plus').replace('/', '_')
         safe_vars.append(safe_var)
         safe_map[safe_var] = mapped_col
-    # Build safe expr for eval
+
+    # Build expressions
     safe_expr = ''
     display_expr = ''
     for i, safe_var in enumerate(safe_vars):
