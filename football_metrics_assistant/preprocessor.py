@@ -324,6 +324,73 @@ def extract_minutes_filter(query: str):
     
     return None
 
+def find_player_by_name(query_name: str, all_players: List[str]) -> str:
+    """
+    Improved player name matching with better accuracy.
+    """
+    query_name = query_name.strip().lower()
+    
+    # Direct exact matches (case insensitive)
+    for player in all_players:
+        if player.lower() == query_name:
+            return player
+    
+    # Common name mappings for famous players
+    famous_players = {
+        'messi': ['L. Messi', 'Lionel Messi', 'Leo Messi'],
+        'ronaldo': ['Cristiano Ronaldo', 'C. Ronaldo'],
+        'cristiano ronaldo': ['Cristiano Ronaldo', 'C. Ronaldo'], 
+        'haaland': ['E. Haaland', 'Erling Haaland'],
+        'mbappe': ['K. Mbappé', 'Kylian Mbappé'],
+        'neymar': ['Neymar Jr', 'Neymar'],
+        'salah': ['Mohamed Salah', 'M. Salah'],
+        'de bruyne': ['K. De Bruyne', 'Kevin De Bruyne'],
+        'lewandowski': ['R. Lewandowski', 'Robert Lewandowski'],
+        'benzema': ['K. Benzema', 'Karim Benzema'],
+        'modric': ['L. Modrić', 'Luka Modrić'],
+        'pedri': ['Pedri', 'Pedro González'],
+        'gavi': ['Gavi', 'Pablo Gavira'],
+        'bellingham': ['J. Bellingham', 'Jude Bellingham'],
+        'vinicius': ['Vinícius Jr.', 'Vini Jr.'],
+        'son': ['Heung-min Son', 'H. Son'],
+        'kane': ['Harry Kane', 'H. Kane'],
+        'kdb': ['K. De Bruyne', 'Kevin De Bruyne'],
+    }
+    
+    # Check famous player mappings
+    if query_name in famous_players:
+        for variant in famous_players[query_name]:
+            for player in all_players:
+                if player.lower() == variant.lower():
+                    return player
+    
+    # Partial name matching for compound names
+    query_parts = query_name.split()
+    if len(query_parts) > 1:
+        for player in all_players:
+            player_lower = player.lower()
+            # Check if all query parts are in the player name
+            if all(part in player_lower for part in query_parts):
+                return player
+    
+    # Last name matching (for single names)
+    if len(query_parts) == 1:
+        single_name = query_parts[0]
+        for player in all_players:
+            player_parts = player.lower().split()
+            # Match last name or if single name is in the player name
+            if (len(player_parts) > 1 and player_parts[-1] == single_name) or single_name in player.lower():
+                return player
+    
+    # Only use fuzzy matching as last resort with high threshold
+    matches = get_close_matches(query_name, [p.lower() for p in all_players], n=1, cutoff=0.85)
+    if matches:
+        # Find the original case version
+        for player in all_players:
+            if player.lower() == matches[0]:
+                return player
+    
+    return query_name  # Return original if no match found
 
 def preprocess_query(query: str) -> Dict[str, Any]:
     result = {"original": query}
@@ -364,14 +431,12 @@ def preprocess_query(query: str) -> Dict[str, Any]:
         if player_match:
             result["query_type"] = "PLAYER_REPORT"
             player_name = player_match.group(1).strip()
-            # Find the actual player name using fuzzy matching
+            
+            # Use improved player matching
             players = get_all_players()
-            found_players = fuzzy_find(player_name, players, threshold=0.7)
-            if found_players:
-                result["player"] = found_players[0]
-            else:
-                result["player"] = player_name
-
+            matched_player = find_player_by_name(player_name, players)
+            result["player"] = matched_player
+    
     # 3. Season/timeframe extraction
     season_match = re.search(r"(\d{4}/\d{2}|this season|last season)", lowered)
     if season_match:
