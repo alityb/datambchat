@@ -508,15 +508,19 @@ def preprocess_query(query: str) -> Dict[str, Any]:
 
     # 7. Position extraction (using fuzzy matching)
     positions = get_all_positions()
-    found_positions = fuzzy_find(query, positions, threshold=0.8)
     # Add robust mapping for common football position groups
     lowered_query = query.lower()
-    if 'defender' in lowered_query:
-        found_positions = ['Centre-back', 'Full-back']
+# In the position extraction section, be more specific:
+    if 'striker' in lowered_query and 'winger' not in lowered_query:
+        found_positions = ['Striker']
     elif 'midfielder' in lowered_query:
-        found_positions = ['Midfielder', 'Winger']
-    elif 'forward' in lowered_query or 'striker' in lowered_query:
-        found_positions = ['Striker', 'Winger']
+        found_positions = ['Midfielder'] 
+    elif 'defender' in lowered_query:
+        found_positions = ['Centre-back', 'Full-back']
+    elif 'goalkeeper' in lowered_query:
+        found_positions = ['Goalkeeper']
+    else:
+        found_positions = fuzzy_find(query, positions, threshold=0.8)
     if found_positions:
         result["position"] = found_positions[0] if len(found_positions) == 1 else found_positions
 
