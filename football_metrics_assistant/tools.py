@@ -108,16 +108,13 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
             df = df[df['Minutes played'] == minutes_value]
         
         applied_filters.append(f"Minutes played {minutes_op} {minutes_value}")
-        print(f"[DEBUG] After custom minutes filter: {len(df)} players, shape: {df.shape}")
-        if df.empty:
-            print("[DEBUG] DataFrame is EMPTY after custom minutes filter!")
+        print(f"[DEBUG] After custom minutes filter: {len(df)} players")
+        
     else:
         # Apply default minimum 270 minutes only if no custom minutes filter
         df = df[df['Minutes played'] >= 270]
         applied_filters.append("Minimum 270 minutes played")
-        print(f"[DEBUG] After default minutes filter: {len(df)} players, shape: {df.shape}")
-        if df.empty:
-            print("[DEBUG] DataFrame is EMPTY after default minutes filter!")
+        print(f"[DEBUG] After default minutes filter: {len(df)} players")
 
     # Special case: if stat is goalkeeper-specific, filter to goalkeepers
     stat = preprocessed_hints.get('stat')
