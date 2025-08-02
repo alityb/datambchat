@@ -98,10 +98,10 @@ def normalize_colname(col: str) -> str:
     return col.strip().lower().replace(' ', '').replace('-', '').replace('+', 'plus').replace('/', '').replace('(', '').replace(')', '').replace('%', 'pct').replace('.', '')
 
 @lru_cache(maxsize=1)
+@lru_cache(maxsize=1)
 def get_alias_to_column_map() -> Dict[str, str]:
     """
     Returns a mapping from all possible user aliases (normalized) to real column names.
-    This is now based on your ACTUAL dataset columns.
     """
     stat_cols = get_stat_columns()
     alias_map = {}
@@ -260,10 +260,9 @@ def get_alias_to_column_map() -> Dict[str, str]:
     for alias, target_col in column_mappings.items():
         if target_col in stat_cols or target_col in META_COLUMNS:
             alias_map[alias] = target_col
-            # Also add the normalized version
             norm_alias = normalize_colname(alias)
             alias_map[norm_alias] = target_col
-    
+        
     print(f"[DEBUG] Created {len(alias_map)} alias mappings")
     print(f"[DEBUG] Sample mappings: xg -> {alias_map.get('xg', 'NOT FOUND')}")
     print(f"[DEBUG] Sample mappings: npxg -> {alias_map.get('npxg', 'NOT FOUND')}")
