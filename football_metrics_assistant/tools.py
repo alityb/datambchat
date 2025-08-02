@@ -341,10 +341,17 @@ def generate_stat_definition_report(stat_name: str) -> Dict[str, Any]:
         # Try to find similar stat names
         from difflib import get_close_matches
         similar_stats = get_close_matches(stat_name, df.columns, n=3, cutoff=0.6)
+        
+        # FIXED: Better error message that includes the original stat name
+        error_msg = f"Statistic '{stat_name}' not found in dataset."
+        if similar_stats:
+            error_msg += f" Did you mean: {', '.join(similar_stats)}?"
+        
         return {
-            "error": f"Statistic '{stat_name}' not found in dataset.",
+            "error": error_msg,
             "suggestions": similar_stats if similar_stats else []
         }
+
     
     # Get definition
     definition = get_stat_definition_text(stat_name)
@@ -832,6 +839,8 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                 "filtered_data": filtered_data.to_dict('records'),
                 "applied_filters": applied_filters
             }
+            
+        # FIX 5: LIST queries should work without stats
         elif query_type == 'LIST':
             return {
                 "success": True,
@@ -839,7 +848,7 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                 "count": len(df),
                 "applied_filters": applied_filters
             }
-        # Add this after the other query_type conditions in analyze_query()
+            
         elif query_type == 'PLAYER_REPORT':
             player_name = preprocessed_hints.get('player')
             if not player_name:
@@ -850,6 +859,7 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                 }
             
             return generate_player_report(player_name)
+            
         elif query_type == 'STAT_DEFINITION':
             stat_name = preprocessed_hints.get('stat')
             if not stat_name:
@@ -861,38 +871,45 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
             
             return generate_stat_definition_report(stat_name)
 
-
         elif query_type in ('TOP_N', 'FILTER'):
-            # Get stat for analysis
+            # FIXED: Don't provide defaults, just error out
             if not stat:
                 return {
-                    "error": "No stat specified for analysis",
+                    "error": "No stat specified for analysis. Please specify what metric you want to analyze (e.g., 'goals per 90', 'assists', 'xG').",
                     "filtered_data": df[['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']].head(10).to_dict('records'),
                     "applied_filters": applied_filters,
                     "count": len(df)
                 }
+                
             # Handle case where stat is a list
             if isinstance(stat, list):
                 stat = stat[0]  # Take the first stat if multiple
+                
             print(f"[DEBUG] Stat column: {stat}")
             print(f"[DEBUG] Stat values: {df[stat].head(10).to_list() if stat in df.columns else 'N/A'}")
+            
             # Get top N
             top_n = preprocessed_hints.get('top_n', 5)
-            # Sort and get top players
+            
+            # FIXED: Sort by the requested stat, not by minutes even if minutes filter exists
             try:
-                top_players_df = sort_and_limit(df, stat, top_n)
+                top_players_df = sort_and_limit(df, stat, top_n)  # Always sort by stat
             except Exception as e:
                 return {
                     "error": f"Stat error: {str(e)}",
                     "applied_filters": applied_filters,
                     "count": len(df)
                 }
+            
             # Generate chart
             fig, chart_description = generate_chart(df, stat, top_n)
+            
             # Get summary
             summary = get_player_summary(df, stat)
+            
             # Convert all summary values to Python types
             summary = {k: to_python_type(v) for k, v in summary.items()}
+            
             return {
                 "success": True,
                 "top_players": [
@@ -920,7 +937,7 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "error": f"Analysis failed: {str(e)}",
             "preprocessed_hints": preprocessed_hints
-        } 
+        }
 
 def to_python_type(val):
     import numpy as np
