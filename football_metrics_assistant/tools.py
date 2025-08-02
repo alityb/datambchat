@@ -691,53 +691,58 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
         computed_stat_col = None
         league = preprocessed_hints.get('league')
         
-        # NEW: Multi-league support - but get overall top N, not top N per league
+        if stat_formula:
+            safe_expr = stat_formula['expr']
+            display_expr = stat_formula.get('display_expr', safe_expr)
+            columns = stat_formula['columns']
+            safe_map = stat_formula.get('safe_map', {})
+            
+            # Check all columns exist
+            missing = [col for col in columns if col not in df.columns]
+            if missing:
+                print(f"[DEBUG] Formula missing columns: {missing}")
+                return {
+                    "error": f"Formula stat missing columns: {missing}",
+                    "applied_filters": applied_filters,
+                    "original_count": original_count
+                }
+            
+            # Compute the formula column
+            try:
+                # Build eval environment
+                local_env = {'safe_map': {}}
+                for safe_var, col in safe_map.items():
+                    local_env['safe_map'][safe_var] = df[col]
+                
+                print(f"[DEBUG] Computing formula: {display_expr}")
+                
+                # Use display_expr as the column name
+                computed_stat_col = display_expr
+                df[computed_stat_col] = eval(safe_expr, {"__builtins__": None}, local_env)
+                
+                # Handle inf/-inf values
+                import numpy as np
+                df[computed_stat_col] = df[computed_stat_col].replace([np.inf, -np.inf], np.nan)
+                
+                # THIS IS CRUCIAL: Use the computed column as the stat to sort by
+                stat = computed_stat_col
+                print(f"[DEBUG] Formula computed successfully, will sort by: '{stat}'")
+                
+            except Exception as e:
+                print(f"[DEBUG] Error computing formula: {e}")
+                return {
+                    "error": f"Error computing formula: {e}",
+                    "applied_filters": applied_filters,
+                    "original_count": original_count
+                }
+        
+        # Handle multi-league case for computed stats
         if isinstance(league, list) and stat:
             top_n = preprocessed_hints.get('top_n', 5)
             
-            # Compute the formula stat column ONCE for the entire dataset
-            if stat_formula:
-                safe_expr = stat_formula['expr']
-                display_expr = stat_formula.get('display_expr', safe_expr)
-                safe_map = stat_formula.get('safe_map', {})
-                columns = stat_formula['columns']
-                
-                # Check all columns exist
-                missing = [col for col in columns if col not in df.columns]
-                if missing:
-                    print(f"[DEBUG] Formula stat missing columns: {missing}")
-                    return {
-                        "error": f"Formula stat missing columns: {missing}",
-                        "applied_filters": applied_filters,
-                        "original_count": original_count
-                    }
-                
-                # Build a safe eval environment for the entire dataset
-                local_env = {'safe_map': {}}
-                for safe_var, col in safe_map.items():
-                    if col in df.columns:
-                        local_env['safe_map'][safe_var] = df[col]
-                    else:
-                        local_env['safe_map'][safe_var] = 0  # or np.nan
-                
-                try:
-                    df[display_expr] = eval(safe_expr, {"__builtins__": None}, local_env)
-                    stat_col = display_expr
-                    print(f"[DEBUG] Computed formula stat '{display_expr}' for entire multi-league dataset")
-                except Exception as e:
-                    print(f"[DEBUG] Error computing formula stat: {e}")
-                    return {
-                        "error": f"Error computing formula stat: {e}",
-                        "applied_filters": applied_filters,
-                        "original_count": original_count
-                    }
-            else:
-                stat_col = stat
-            
-            # Now get the overall top N players across ALL leagues
             try:
                 # Sort entire dataset and get top N
-                top_players_df = sort_and_limit(df, stat_col, top_n)
+                top_players_df = sort_and_limit(df, stat, top_n)
                 
                 # Convert to records and add league info
                 all_players = []
@@ -752,10 +757,10 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                 for lg in league:
                     df_league = df[df['League'] == lg]
                     if not df_league.empty:
-                        league_summaries[lg] = get_player_summary(df_league, stat_col)
+                        league_summaries[lg] = get_player_summary(df_league, stat)
                 
                 # Build overall summary
-                overall_summary = get_player_summary(df, stat_col)
+                overall_summary = get_player_summary(df, stat)
                 
                 def clean_json(obj):
                     if isinstance(obj, dict):
@@ -773,7 +778,7 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                     "summary_by_league": clean_json(league_summaries),  # League breakdowns for context
                     "applied_filters": applied_filters,
                     "count": len(df),
-                    "stat": stat_col
+                    "stat": stat
                 }
                 
             except Exception as e:
@@ -783,49 +788,8 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                     "applied_filters": applied_filters,
                     "original_count": original_count
                 }
-        if stat_formula:
-            safe_expr = stat_formula['expr']
-            display_expr = stat_formula.get('display_expr', safe_expr)
-            columns = stat_formula['columns']
-            safe_map = stat_formula.get('safe_map', {})
-            ops = stat_formula['ops']
-            # Check all columns exist
-            missing = [col for col in columns if col not in df.columns]
-            if missing:
-                print(f"[DEBUG] Formula stat missing columns: {missing}")
-                return {
-                    "error": f"Formula stat missing columns: {missing}",
-                    "applied_filters": applied_filters,
-                    "original_count": original_count
-                }
-            # Compute the formula column
-            try:
-                # Build a safe eval environment
-                local_env = {'safe_map': {}}
-                for safe_var, col in safe_map.items():
-                    local_env['safe_map'][safe_var] = df[col]
-                print(f"[DEBUG] Formula eval local_env keys: {list(local_env['safe_map'].keys())}")
-                # Use the display_expr as the new column name
-                computed_stat_col = display_expr
-                df[computed_stat_col] = eval(safe_expr, {"__builtins__": None}, local_env)
-                # Patch: replace inf, -inf, NaN with None
-                import numpy as np
-                before = df[computed_stat_col].isna().sum()
-                df[computed_stat_col] = df[computed_stat_col].replace([np.inf, -np.inf], np.nan)
-                after = df[computed_stat_col].isna().sum()
-                if after > before:
-                    print(f"[DEBUG] Replaced {after - before} inf/-inf values with NaN in computed stat column '{computed_stat_col}'")
-                stat = computed_stat_col
-            except Exception as e:
-                print(f"[DEBUG] Error computing formula stat: {e}")
-                return {
-                    "error": f"Error computing formula stat: {e}",
-                    "applied_filters": applied_filters,
-                    "original_count": original_count
-                }
-        # --- End formula stat computation ---
         
-
+        # Continue with other query types...
         if query_type == 'COUNT' or query_type == 'FILTER':
             # Always include filtered_data for table rendering
             filtered_data = df[['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']]
@@ -840,7 +804,6 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                 "applied_filters": applied_filters
             }
             
-        # FIX 5: LIST queries should work without stats
         elif query_type == 'LIST':
             return {
                 "success": True,
@@ -872,7 +835,7 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
             return generate_stat_definition_report(stat_name)
 
         elif query_type in ('TOP_N', 'FILTER'):
-            # FIXED: Don't provide defaults, just error out
+            # Check if we have a stat to work with
             if not stat:
                 return {
                     "error": "No stat specified for analysis. Please specify what metric you want to analyze (e.g., 'goals per 90', 'assists', 'xG').",
@@ -891,9 +854,9 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
             # Get top N
             top_n = preprocessed_hints.get('top_n', 5)
             
-            # FIXED: Sort by the requested stat, not by minutes even if minutes filter exists
+            # Sort by the requested stat
             try:
-                top_players_df = sort_and_limit(df, stat, top_n)  # Always sort by stat
+                top_players_df = sort_and_limit(df, stat, top_n)
             except Exception as e:
                 return {
                     "error": f"Stat error: {str(e)}",
@@ -938,7 +901,7 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
             "error": f"Analysis failed: {str(e)}",
             "preprocessed_hints": preprocessed_hints
         }
-
+    
 def to_python_type(val):
     import numpy as np
     if isinstance(val, np.generic):
