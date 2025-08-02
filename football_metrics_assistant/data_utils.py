@@ -319,4 +319,38 @@ def get_column_type_map() -> Dict[str, List[str]]:
         if col not in META_COLUMNS:
             types.append('stat')
         type_map[col] = types
-    return type_map 
+    return type_map
+
+def debug_data_info():
+    """Print detailed information about the dataset structure"""
+    df = load_data()
+    print(f"Dataset shape: {df.shape}")
+    print(f"Total columns: {len(df.columns)}")
+    
+    print("\n=== META COLUMNS ===")
+    meta_found = [col for col in df.columns if col in META_COLUMNS]
+    meta_missing = [col for col in META_COLUMNS if col not in df.columns]
+    print(f"Found: {meta_found}")
+    print(f"Missing: {meta_missing}")
+    
+    print("\n=== KEY STAT COLUMNS ===")
+    key_stats = [
+        'Goals per 90', 'Assists per 90', 'xG per 90', 'xA per 90', 
+        'npxG per 90', 'Goals + Assists per 90', 'Clean sheets'
+    ]
+    for stat in key_stats:
+        if stat in df.columns:
+            non_null = df[stat].count()
+            total = len(df)
+            print(f"✓ {stat} ({non_null}/{total} non-null)")
+        else:
+            print(f"✗ {stat} - MISSING")
+    
+    print("\n=== ALIAS MAPPING TEST ===")
+    alias_map = get_alias_to_column_map()
+    test_aliases = ['xg', 'npxg', 'xa', 'assists', 'goals', 'goals+assists']
+    for alias in test_aliases:
+        mapped = alias_map.get(alias, 'NOT FOUND')
+        exists = mapped in df.columns if mapped != 'NOT FOUND' else False
+        status = "✓" if exists else "✗"
+        print(f"{status} '{alias}' -> '{mapped}' (exists: {exists})")
