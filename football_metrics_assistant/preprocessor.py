@@ -200,30 +200,41 @@ class SimplifiedPreprocessor:
                 result["query_type"] = "STAT_DEFINITION"
                 stat_phrase = match.group(1).strip()
                 
-                # Clean up the stat phrase
+                # Clean up the stat phrase but preserve it if mapping fails
                 clean_words = ['statistic', 'stat', 'metric', 'the', 'a', 'an']
+                cleaned_phrase = stat_phrase
                 for word in clean_words:
-                    stat_phrase = re.sub(rf'\b{word}\b', '', stat_phrase, flags=re.IGNORECASE).strip()
+                    cleaned_phrase = re.sub(rf'\b{word}\b', '', cleaned_phrase, flags=re.IGNORECASE).strip()
                 
-                # Map to actual stat
-                mapped_stat = self._map_stat_phrase(stat_phrase)
-                result["stat"] = mapped_stat
+                # Try to map to actual stat
+                mapped_stat = self._map_stat_phrase(cleaned_phrase)
+                if mapped_stat:
+                    result["stat"] = mapped_stat
+                else:
+                    # Keep the original phrase so error messages are meaningful
+                    result["stat"] = stat_phrase
                 break
 
     def _extract_leagues(self, lowered: str, result: Dict[str, Any]) -> None:
         """Extract leagues with multi-league support."""
         found_leagues = []
         
-        # Check for league aliases first
+        # Check for league aliases first (these should override individual leagues)
         for alias, league_list in self.league_aliases.items():
             if alias in lowered:
                 result["league"] = league_list
                 result["_league_is_alias"] = True
-                return
+                return  # IMPORTANT: Return early to avoid mixing with individual leagues
         
-        # Check for individual leagues
+        # Check for individual leagues - but be more precise with word boundaries
         for keyword, league_name in self.league_keywords.items():
-            if keyword in lowered and league_name not in found_leagues:
+            # Use word boundaries to avoid partial matches, except for short forms
+            if len(keyword) <= 3:  # Short forms like 'epl', 'pl'
+                pattern = rf'\b{re.escape(keyword)}\b'
+            else:  # Longer names
+                pattern = rf'{re.escape(keyword)}'
+            
+            if re.search(pattern, lowered) and league_name not in found_leagues:
                 found_leagues.append(league_name)
         
         # Handle "and" patterns for multi-league
@@ -231,7 +242,12 @@ class SimplifiedPreprocessor:
             parts = [part.strip() for part in lowered.split(" and ")]
             for part in parts:
                 for keyword, league_name in self.league_keywords.items():
-                    if keyword in part and league_name not in found_leagues:
+                    if len(keyword) <= 3:
+                        pattern = rf'\b{re.escape(keyword)}\b'
+                    else:
+                        pattern = rf'{re.escape(keyword)}'
+                    
+                    if re.search(pattern, part) and league_name not in found_leagues:
                         found_leagues.append(league_name)
         
         if found_leagues:
@@ -304,13 +320,39 @@ class SimplifiedPreprocessor:
 
     def _extract_stat_formula(self, lowered: str) -> Optional[Dict[str, Any]]:
         """Extract and parse stat formulas."""
-        # Find operators
-        ops = re.findall(r'[+\-/*]', lowered)
-        if not ops:
+        # Find operators - FIXED: Include division and handle spaces
+        ops_pattern = r'[+\-*/]|\s+/\s+|\s+divided\s+by\s+'
+        ops_matches = list(re.finditer(ops_pattern, lowered))
+        
+        if not ops_matches:
             return None
         
-        # Split by operators and clean parts
-        parts = re.split(r'[+\-/*]', lowered)
+        # Extract operators and their positions
+        ops = []
+        split_positions = [0]
+        
+        for match in ops_matches:
+            op_text = match.group().strip()
+            if 'divided by' in op_text or '/' in op_text:
+                ops.append('/')
+            elif '+' in op_text:
+                ops.append('+')
+            elif '-' in op_text:
+                ops.append('-')
+            elif '*' in op_text:
+                ops.append('*')
+            
+            split_positions.append(match.start())
+            split_positions.append(match.end())
+        
+        split_positions.append(len(lowered))
+        
+        # Extract parts between operators
+        parts = []
+        for i in range(0, len(split_positions)-1, 2):
+            part = lowered[split_positions[i]:split_positions[i+1]].strip()
+            if part:
+                parts.append(part)
         
         # Clean each part and map to columns
         mapped_cols = []
@@ -318,10 +360,8 @@ class SimplifiedPreprocessor:
         safe_map = {}
         
         for part in parts:
-            part = part.strip()
-            
             # Remove common prefixes
-            for prefix in ["most ", "top ", "highest ", "best "]:
+            for prefix in ["most ", "top ", "highest ", "best ", "players by ", "strikers by "]:
                 if part.startswith(prefix):
                     part = part[len(prefix):].strip()
                     break
@@ -396,13 +436,23 @@ class SimplifiedPreprocessor:
         if norm_phrase in self.alias_map:
             return self.alias_map[norm_phrase]
         
-        # Fuzzy match (high threshold)
-        matches = get_close_matches(phrase, list(self.alias_map.keys()), n=1, cutoff=0.8)
+        # FIXED: More consistent fuzzy matching
+        # First try high confidence fuzzy match on original phrase
+        matches = get_close_matches(phrase, list(self.alias_map.keys()), n=1, cutoff=0.85)
         if matches:
             return self.alias_map[matches[0]]
         
+        # Then try fuzzy match on normalized phrase
+        matches = get_close_matches(norm_phrase, list(self.alias_map.keys()), n=1, cutoff=0.85)
+        if matches:
+            return self.alias_map[matches[0]]
+        
+        # FIXED: Add specific league name fuzzy matching
+        if any(word in phrase for word in ['serie', 'seria', 'italy']):
+            if 'serie a' in self.league_keywords.values() or 'Serie A' in [v for v in self.league_keywords.values()]:
+                return None  # This will be handled by league extraction
+        
         return None
-
     def _find_player_name(self, query_name: str) -> str:
         """Find player name with simple matching."""
         query_name = query_name.strip().lower()
