@@ -91,10 +91,12 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
         if df.empty:
             print("[DEBUG] DataFrame is EMPTY after player filter!")
 
-    # NEW: Minutes filter (apply BEFORE the default 270 minutes filter)
-    if preprocessed_hints.get('minutes_value') is not None:
-        minutes_op = preprocessed_hints.get('minutes_op', '>=')
+    # FIXED: Minutes filter logic - check for both minutes_op AND minutes_value
+    if preprocessed_hints.get('minutes_op') and preprocessed_hints.get('minutes_value') is not None:
+        minutes_op = preprocessed_hints['minutes_op']
         minutes_value = preprocessed_hints['minutes_value']
+        
+        print(f"[DEBUG] Applying custom minutes filter: {minutes_op} {minutes_value}")
         
         if minutes_op == '>=':
             df = df[df['Minutes played'] >= minutes_value]
@@ -927,4 +929,4 @@ def to_python_type(val):
     if isinstance(val, float):
         if np.isnan(val) or np.isinf(val):
             return None
-    return val 
+    return val
