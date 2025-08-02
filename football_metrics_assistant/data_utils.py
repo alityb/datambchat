@@ -155,12 +155,15 @@ def get_alias_to_column_map() -> Dict[str, str]:
         'xg90': 'xG per 90',
         'highest xg': 'xG per 90',
         
-        # npxG (Non-penalty Expected Goals)
         'npxg': 'npxG per 90',
         'npxg per 90': 'npxG per 90',
         'non penalty xg': 'npxG per 90',
         'non-penalty xg': 'npxG per 90',
-        'non penalty expected goals': 'npxG per 90',
+        'non penalty expected goals': 'npxG per 90', 
+        'non-penalty expected goals': 'npxG per 90',
+        'npxg90': 'npxG per 90',
+        'np xg': 'npxG per 90',
+        'npxgper90': 'npxG per 90',
         
         # xA (Expected Assists)
         'xa': 'xA per 90',
