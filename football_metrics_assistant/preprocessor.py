@@ -290,90 +290,171 @@ class SimplifiedPreprocessor:
 
     def _extract_single_stat(self, lowered: str) -> Optional[str]:
         """Extract a single stat from the query."""
-        # Get the main part of the query (before location/filters)
-        main_part = lowered
-        for delimiter in [' in ', ' for ', ' from ', ' with ']:
-            if delimiter in lowered:
-                parts = lowered.split(delimiter)
-                if len(parts) > 1:
-                    # Take the part that's most likely to contain the stat
-                    if delimiter == ' with ' and any(word in parts[1] for word in ['than', 'least', 'most']):
-                        # "with more than X goals" - stat is after 'with'
-                        continue
-                    else:
-                        main_part = parts[0]
-                        break
+        print(f"[DEBUG] Extracting single stat from: '{lowered}'")
         
-        # Look for stat keywords in the main part
+        # Handle "with" filter clauses - we want the stat before "with"
+        main_part = lowered
+        
+        if ' with ' in lowered:
+            parts = lowered.split(' with ')
+            if len(parts) > 1:
+                # Check if part after "with" is a filter
+                filter_indicators = ['more than', 'less than', 'at least', 'over', 'under', 'minutes', 'than', '+']
+                if any(indicator in parts[1] for indicator in filter_indicators):
+                    main_part = parts[0].strip()
+                    print(f"[DEBUG] Detected filter after 'with', using: '{main_part}'")
+        
+        # Handle location delimiters
+        for delimiter in [' in ', ' for ', ' from ']:
+            if delimiter in main_part:
+                main_part = main_part.split(delimiter)[0].strip()
+                break
+        
+        # Remove prefixes
+        prefixes = ['top ', 'best ', 'highest ', 'most ', 'players by ']
+        for prefix in prefixes:
+            if main_part.startswith(prefix):
+                main_part = main_part[len(prefix):].strip()
+                break
+        
+        # Remove numbers
+        main_part = re.sub(r'^\d+\s*', '', main_part)
+        
+        print(f"[DEBUG] Cleaned phrase: '{main_part}'")
+        
+        # Find best match
         best_match = None
         best_score = 0
         
         for alias, column in self.alias_map.items():
             if alias in main_part:
-                # Prefer longer, more specific matches
                 score = len(alias)
                 if score > best_score:
                     best_match = column
                     best_score = score
         
+        print(f"[DEBUG] Best match: '{best_match}'")
         return best_match
 
     def _extract_stat_formula(self, lowered: str) -> Optional[Dict[str, Any]]:
-        """Extract and parse stat formulas."""
-        # Find operators - FIXED: Include division and handle spaces
-        ops_pattern = r'[+\-*/]|\s+/\s+|\s+divided\s+by\s+'
-        ops_matches = list(re.finditer(ops_pattern, lowered))
+        """Extract and parse stat formulas with improved division handling and location filtering."""
+        print(f"[DEBUG] Extracting formula from: {lowered}")
         
-        if not ops_matches:
+        # First, remove location/filter phrases that might interfere with formula parsing
+        # Common location indicators
+        location_patterns = [
+            r'\s+in\s+\w+(?:\s+\w+)*(?:\s+league)?',  # "in premier league", "in la liga"
+            r'\s+from\s+\w+(?:\s+\w+)*',              # "from manchester united"
+            r'\s+for\s+\w+(?:\s+\w+)*',               # "for strikers"
+            r'\s+playing\s+for\s+\w+(?:\s+\w+)*',     # "playing for arsenal"
+            r'\s+with\s+\d+\+?\s*\w+',                # "with 1000+ minutes"
+            r'\s+with\s+(?:more|less|at least|over|under)\s+\d+',  # "with more than 500"
+        ]
+        
+        # Clean the query by removing location phrases
+        cleaned_query = lowered
+        for pattern in location_patterns:
+            match = re.search(pattern, cleaned_query)
+            if match:
+                # Only remove if it's at the end or followed by more location info
+                if match.end() >= len(cleaned_query) - 10:  # Near the end
+                    cleaned_query = cleaned_query[:match.start()].strip()
+                    print(f"[DEBUG] Removed location phrase, cleaned to: '{cleaned_query}'")
+                    break
+        
+        # Look for division patterns first (more specific)
+        division_found = False
+        division_pos = None
+        division_op = None
+        
+        division_patterns = [
+            (r'\s+divided\s+by\s+', '/'),
+            (r'\s*/\s*', '/'),
+            (r'\s+/\s+', '/'),
+            (r'/', '/'),
+        ]
+        
+        for pattern, op in division_patterns:
+            match = re.search(pattern, cleaned_query)
+            if match:
+                division_found = True
+                division_pos = (match.start(), match.end())
+                division_op = op
+                break
+        
+        if division_found:
+            # Handle division case
+            start, end = division_pos
+            left_part = cleaned_query[:start].strip()
+            right_part = cleaned_query[end:].strip()
+            
+            if not left_part or not right_part:
+                return None
+                
+            parts = [left_part, right_part]
+            ops = [division_op]
+            
+        else:
+            # Handle other operators
+            ops_pattern = r'[+\-*]'
+            ops_matches = list(re.finditer(ops_pattern, cleaned_query))
+            
+            if not ops_matches:
+                return None
+            
+            # Extract parts and operators
+            parts = []
+            ops = []
+            last_pos = 0
+            
+            for match in ops_matches:
+                part = cleaned_query[last_pos:match.start()].strip()
+                if part:
+                    parts.append(part)
+                ops.append(match.group())
+                last_pos = match.end()
+            
+            final_part = cleaned_query[last_pos:].strip()
+            if final_part:
+                parts.append(final_part)
+        
+        print(f"[DEBUG] Formula parts: {parts}")
+        print(f"[DEBUG] Formula ops: {ops}")
+        
+        if len(parts) != len(ops) + 1:
             return None
         
-        # Extract operators and their positions
-        ops = []
-        split_positions = [0]
-        
-        for match in ops_matches:
-            op_text = match.group().strip()
-            if 'divided by' in op_text or '/' in op_text:
-                ops.append('/')
-            elif '+' in op_text:
-                ops.append('+')
-            elif '-' in op_text:
-                ops.append('-')
-            elif '*' in op_text:
-                ops.append('*')
-            
-            split_positions.append(match.start())
-            split_positions.append(match.end())
-        
-        split_positions.append(len(lowered))
-        
-        # Extract parts between operators
-        parts = []
-        for i in range(0, len(split_positions)-1, 2):
-            part = lowered[split_positions[i]:split_positions[i+1]].strip()
-            if part:
-                parts.append(part)
-        
-        # Clean each part and map to columns
+        # Clean and map parts
         mapped_cols = []
         safe_vars = []
         safe_map = {}
         
         for part in parts:
-            # Remove common prefixes
-            for prefix in ["most ", "top ", "highest ", "best ", "players by ", "strikers by "]:
-                if part.startswith(prefix):
-                    part = part[len(prefix):].strip()
+            # Clean part
+            clean_part = part
+            
+            # Remove prefixes
+            prefixes = ["most ", "top ", "highest ", "best ", "players by ", "strikers by "]
+            for prefix in prefixes:
+                if clean_part.startswith(prefix):
+                    clean_part = clean_part[len(prefix):].strip()
                     break
             
-            # Remove numbers at start
-            part = re.sub(r'^\d+\s*', '', part)
+            # Remove numbers
+            clean_part = re.sub(r'^\d+\s*', '', clean_part)
             
-            # Map the part to a column
-            mapped_col = self._map_stat_phrase(part)
+            # Additional cleaning for stat names
+            clean_part = clean_part.strip()
+            
+            print(f"[DEBUG] Cleaning part: '{part}' -> '{clean_part}'")
+            
+            # Map to column
+            mapped_col = self._map_stat_phrase(clean_part)
             if not mapped_col:
-                return None  # If we can't map a part, fail the formula
+                print(f"[DEBUG] Could not map: '{clean_part}'")
+                return None
             
+            print(f"[DEBUG] Mapped '{clean_part}' to '{mapped_col}'")
             mapped_cols.append(mapped_col)
             safe_var = self._make_safe_var(mapped_col)
             safe_vars.append(safe_var)
@@ -382,12 +463,16 @@ class SimplifiedPreprocessor:
         # Build expressions
         safe_expr = ''
         display_expr = ''
+        
         for i, (safe_var, mapped_col) in enumerate(zip(safe_vars, mapped_cols)):
             safe_expr += f'safe_map["{safe_var}"]'
-            display_expr += f'({mapped_col})'
+            display_expr += mapped_col
+            
             if i < len(ops):
-                safe_expr += ops[i]
-                display_expr += ops[i]
+                safe_expr += f' {ops[i]} '
+                display_expr += f' {ops[i]} '
+        
+        print(f"[DEBUG] Built formula: {display_expr}")
         
         return {
             'expr': safe_expr,
