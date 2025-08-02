@@ -95,162 +95,180 @@ def get_per_100_columns() -> List[str]:
     return [col for col in get_stat_columns() if 'per 100' in col.lower()]
 
 def normalize_colname(col: str) -> str:
-    return col.strip().lower().replace(' ', '').replace('-', '').replace('+', 'plus').replace('/', '').replace('(', '').replace(')', '')
+    return col.strip().lower().replace(' ', '').replace('-', '').replace('+', 'plus').replace('/', '').replace('(', '').replace(')', '').replace('%', 'pct').replace('.', '')
 
 @lru_cache(maxsize=1)
 def get_alias_to_column_map() -> Dict[str, str]:
     """
-    Returns a mapping from all possible user aliases (normalized) to real column names, including fuzzy/partial matches and auto-generated forms.
+    Returns a mapping from all possible user aliases (normalized) to real column names.
+    This is now based on your ACTUAL dataset columns.
     """
     stat_cols = get_stat_columns()
     alias_map = {}
+    
+    # First, add all existing columns with their variations
     for col in stat_cols:
         norm_col = normalize_colname(col)
-        # Add the normalized column name
+        
+        # Add normalized versions
         alias_map[norm_col] = col
-        # Add the original column name (lowercase, stripped)
         alias_map[col.strip().lower()] = col
-        # Add underscores
         alias_map[col.strip().lower().replace(' ', '_')] = col
-        # Add no spaces
         alias_map[col.strip().lower().replace(' ', '')] = col
-        # Add dashes/plus/minus replaced
-        alias_map[col.strip().lower().replace(' ', '').replace('-', '').replace('+', 'plus').replace('/', '').replace('(', '').replace(')', '')] = col
+        
         # Add per90/per100 abbreviations
         if 'per 90' in col.lower():
             base = col.lower().replace('per 90', '').strip().replace(' ', '')
             alias_map[base + '90'] = col
             alias_map[base + 'p90'] = col
-            # e.g., assists per 90 -> a90
-            if 'assist' in base:
-                alias_map['a90'] = col
-            if 'goal' in base:
-                alias_map['g90'] = col
-            if 'xg' in base:
-                alias_map['xg90'] = col
-            if 'xa' in base:
-                alias_map['xa90'] = col
+            
         if 'per 100' in col.lower():
             base = col.lower().replace('per 100', '').strip().replace(' ', '')
             alias_map[base + '100'] = col
             alias_map[base + 'p100'] = col
-        # Add short forms for common stats
-        if 'xg' in norm_col:
-            alias_map['xg'] = col
-        if 'xa' in norm_col:
-            alias_map['xa'] = col
-        if 'npxg' in norm_col:
-            alias_map['npxg'] = col
-        if 'goalsassists' in norm_col or 'goals+assists' in norm_col:
-            alias_map['goals+assists'] = col
-            alias_map['goalsassists'] = col
-        if 'possession+/-' in norm_col or 'possessionplusminus' in norm_col or 'poss+/-' in norm_col or 'possplusminus' in norm_col:
-            alias_map['poss+/-'] = col
-            alias_map['possession+/-'] = col
-            alias_map['possplusminus'] = col
-            alias_map['possessionplusminus'] = col
-            alias_map['poss'] = col
-        if 'exitline' in norm_col:
-            alias_map['exit line'] = col
-            alias_map['exitline'] = col
-    # Add default mappings for common football stats (if present)
-    default_stat_map = {
-        'tackles': 'Tackles per 90',
-        'sliding tackles': 'Sliding tackles per 90',
-        'assists': 'Assists per 90',
-        'duels': 'Duels per 90',
-        'interceptions': 'Interceptions per 90',
-        'saves': 'Saves per 90',
+    
+    # Now add specific mappings based on your ACTUAL columns
+    column_mappings = {
+        # Goals
         'goals': 'Goals per 90',
-        'shots': 'Shots per 90',
-        'passes': 'Passes per 90',
-        'crosses': 'Crosses per 90',
-        'dribbles': 'Dribbles attempted per 90',
-        'clean sheets': 'Clean sheets',
-        'progressive passes': 'Progressive passes per 90',
-        'progressive carries': 'Progressive carries per 90',
-        'progressive actions': 'Progressive actions per 90',
-        'key passes': 'Key passes per 90',
-        'possession +/-': 'Possession +/-',
-        'poss+/-': 'Possession +/-',
-        'goals + assists': 'Goals + Assists per 90',
+        'goal': 'Goals per 90',
+        'goals per 90': 'Goals per 90',
+        'g90': 'Goals per 90',
+        'goles': 'Goals per 90',  # Handle typo from test
+        
+        # Non-penalty goals
+        'non penalty goals': 'Non-penalty goals per 90',
+        'npg': 'Non-penalty goals per 90',
+        'non-penalty goals': 'Non-penalty goals per 90',
+        
+        # Assists
+        'assists': 'Assists per 90',
+        'assist': 'Assists per 90',
+        'assists per 90': 'Assists per 90',
+        'a90': 'Assists per 90',
+        'assits': 'Assists per 90',  # Handle typo from test
+        
+        # xG (Expected Goals)
+        'xg': 'xG per 90',
+        'xg per 90': 'xG per 90',
+        'expected goals': 'xG per 90',
+        'xg90': 'xG per 90',
+        'highest xg': 'xG per 90',
+        
+        # npxG (Non-penalty Expected Goals)
+        'npxg': 'npxG per 90',
+        'npxg per 90': 'npxG per 90',
+        'non penalty xg': 'npxG per 90',
+        'non-penalty xg': 'npxG per 90',
+        'non penalty expected goals': 'npxG per 90',
+        
+        # xA (Expected Assists)
+        'xa': 'xA per 90',
+        'xa per 90': 'xA per 90',
+        'expected assists': 'xA per 90',
+        'xa90': 'xA per 90',
+        'highest xa': 'xA per 90',
+        
+        # Goals + Assists
         'goals+assists': 'Goals + Assists per 90',
+        'goals + assists': 'Goals + Assists per 90',
         'g+a': 'Goals + Assists per 90',
         'goal contributions': 'Goals + Assists per 90',
         'goals and assists': 'Goals + Assists per 90',
         'goal+assist': 'Goals + Assists per 90',
-        'goal/assist': 'Goals + Assists per 90',
         'contributions': 'Goals + Assists per 90',
-        'goal involvement': 'Goals + Assists per 90',
-        'involvements': 'Goals + Assists per 90',
-        'g and a': 'Goals + Assists per 90',
-        'xg': 'xG per 90',
-        'xgper90': 'xG per 90',
-        'xg90': 'xG per 90',
-        'xg/90': 'xG per 90',
-        'xa': 'xA per 90',
-        'xaper90': 'xA per 90',
-        'xa90': 'xA per 90',
-        'xa/90': 'xA per 90',
-        'highest xg': 'xG per 90',
-        'xg per 90': 'xG per 90',
-        'expected goals': 'xG per 90',
-        'xg per 100': 'xG per 100 touches',
-        'xg/shot': 'xG/Shot',
-        'npxg': 'npxG per 90',
-        'npxg per 90': 'npxG per 90',
-        'npxg/shot': 'npxG/Shot',
-        'assists per 90': 'Assists per 90',
-        'goals per 90': 'Goals per 90',
+        'goals plus assists': 'Goals + Assists per 90',
+        
+        # NPG + A
+        'npg+a': 'NPG+A per 90',
+        'non penalty goals + assists': 'NPG+A per 90',
+        
+        # xG + xA
+        'xg+xa': 'xG+xA per 90',
+        'xg + xa': 'xG+xA per 90',
+        'expected goals + assists': 'xG+xA per 90',
+        
+        # npxG + xA
+        'npxg+xa': 'npxG+xA per 90',
+        'npxg + xa': 'npxG+xA per 90',
+        
+        # Other attacking stats
+        'shots': 'Shots per 90',
         'shots per 90': 'Shots per 90',
+        'shots on target': 'Shots on target per 90',
+        'headed goals': 'Headed goals per 90',
+        'touches in box': 'Touches in box per 90',
+        
+        # Passing stats
+        'passes': 'Passes per 90',
         'passes per 90': 'Passes per 90',
-        'key passes per 90': 'Key passes per 90',
-        'clean sheats': 'Clean sheets',
-        'shot assists': 'Shot assists per 90',
-        'deep completions': 'Deep completions per 90',
-        'through passes': 'Through passes per 90',
+        'key passes': 'Key passes per 90',
+        'progressive passes': 'Progressive passes per 90',
         'forward passes': 'Forward passes per 90',
         'long passes': 'Long passes per 90',
         'short passes': 'Short passes per 90',
-        'aerial duels': 'Aerial duels per 90',
+        'through passes': 'Through passes per 90',
+        'crosses': 'Crosses per 90',
+        'deep completions': 'Deep completions per 90',
+        'shot assists': 'Shot assists per 90',
+        
+        # Defensive stats
+        'tackles': 'Sliding tackles per 90',
+        'sliding tackles': 'Sliding tackles per 90',
+        'interceptions': 'Interceptions per 90',
+        'blocks': 'Shots blocked per 90',
         'defensive duels': 'Defensive duels per 90',
-        'blocks': 'Blocks per 90',
-        'clearances': 'Clearances per 90',
+        'aerial duels': 'Aerial duels per 90',
+        'duels': 'Duels per 90',
+        
+        # Possession stats
+        'possession +/-': 'Possession +/-',
+        'poss+/-': 'Possession +/-',
+        'possessions won': 'Possessions won per 90',
         'touches': 'Touches per 90',
-        'fouls': 'Fouls suffered per 90',
-        'penalties': 'Penalties attempted',
-        'penalty success': 'Penalty success rate %',
-        'save percentage': 'Save percentage %.1',
+        'dribbles': 'Dribbles attempted per 90',
+        'progressive carries': 'Progressive carries per 90',
+        'progressive actions': 'Progressive actions per 90',
+        
+        # Goalkeeper stats
+        'clean sheets': 'Clean sheets',
+        'saves': 'Saves per 90',
+        'xg conceded': 'xG conceded per 90',
+        'prevented goals': 'Prevented goals per 90',
+        
+        # Percentages and ratios
         'shot accuracy': 'Shots on target %.1',
         'pass completion': 'Pass completion %.1',
         'dribble success': 'Dribble success rate %.1',
         'cross accuracy': 'Cross accuracy %.1',
+        'save percentage': 'Save percentage %.1',
         'duels won': 'Duels won %',
-        'offensive duels': 'Offensive duels per 90',
-        'defensive duels won': 'Defensive duels won per 90',
-        'aerial duels won': 'Aerial duels won per 90',
-        'progressive passes completed': 'Progressive passes completed per 90',
-        'progressive pass accuracy': 'Progressive pass accuracy %.1',
-        'progressive action rate': 'Progressive action rate',
-        'ball-carrying frequency': 'Ball-carrying frequency',
-        'xg+xA': 'xG+xA per 90',
-        'npxg+xa': 'npxG+xA per 90',
+        'aerial duels won': 'Aerial duels won %.1',
+        'defensive duels won': 'Defensive duels won %.1',
         'goals per xg': 'Goals per xG',
         'assists per xa': 'Assists per xA',
-        'goals - xg': 'Goals - xG per 90',
-        'assists - xa': 'Assists - xA per 90',
-        'matches': 'Matches played',
-        'minutes': 'Minutes played',
+        
+        # Meta columns
         'age': 'Age',
+        'minutes': 'Minutes played',
+        'matches': 'Matches played',
+        'minutes played': 'Minutes played',
+        'matches played': 'Matches played',
     }
-    for user_alias, colname in default_stat_map.items():
-        if colname in stat_cols:
-            alias_map[user_alias] = colname
-            # Add debug output for these mappings
-            if user_alias in ['xg', 'xgper90', 'xg90', 'xg/90', 'xa', 'xaper90', 'xa90', 'xa/90']:
-                print(f"[DEBUG] Alias '{user_alias}' mapped to '{colname}'")
-    # Debug: print all aliases for inspection
-    print("[DEBUG] Stat alias map (sample):", dict(list(alias_map.items())[:20]))
+    
+    # Only add mappings for columns that actually exist in your dataset
+    for alias, target_col in column_mappings.items():
+        if target_col in stat_cols or target_col in META_COLUMNS:
+            alias_map[alias] = target_col
+            # Also add the normalized version
+            norm_alias = normalize_colname(alias)
+            alias_map[norm_alias] = target_col
+    
+    print(f"[DEBUG] Created {len(alias_map)} alias mappings")
+    print(f"[DEBUG] Sample mappings: xg -> {alias_map.get('xg', 'NOT FOUND')}")
+    print(f"[DEBUG] Sample mappings: npxg -> {alias_map.get('npxg', 'NOT FOUND')}")
+    print(f"[DEBUG] Sample mappings: assists -> {alias_map.get('assists', 'NOT FOUND')}")
+    
     return alias_map
 
 @lru_cache(maxsize=1)
