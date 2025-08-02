@@ -1,767 +1,491 @@
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from football_metrics_assistant.data_utils import (
     get_all_teams, get_all_players, get_all_positions, get_all_leagues,
     get_alias_to_column_map, normalize_colname
 )
-from spellchecker import SpellChecker
-import phonetics
 from football_metrics_assistant.llm_interface import classify_query_type
-from difflib import get_close_matches, SequenceMatcher
+from difflib import get_close_matches
 
-LEAGUE_PRIORITY = [
-    "Premier League",
-    "La Liga",
-    "Bundesliga",
-    "Serie A",
-    "Ligue 1",
-    "Eredivisie",
-    "Championship",
-    "Brazil Serie A",
-    "Serie B",
-    # ...add more as needed
-]
 
-def correction_dict():
-    # Add more as you see common typos
-    return {
-        'serei a': 'Serie A',
-        'premier legaue': 'Premier League',
-        'ligue 1': 'Ligue 1',
-        'bundesliga': 'Bundesliga',
-        'laliga': 'La Liga',
-        'champions leage': 'Champions League',
-        'clean sheats': 'Clean sheets',
-        'assits': 'Assists per 90',
-        'goals+assists': 'Goals + Assists per 90',
-        # ...add more as needed
-    }
-
-def robust_correction(phrase: str, candidates: List[str]) -> str:
-    corrections = correction_dict()
-    norm_phrase = phrase.lower().strip()
-    print(f"[DEBUG] Robust correction input: '{phrase}' (normalized: '{norm_phrase}')")
-    # 1. Correction dict (substring match)
-    for typo, correct in corrections.items():
-        if typo in norm_phrase:
-            print(f"[DEBUG] Correction dict: '{norm_phrase}' contains '{typo}' -> '{correct}'")
-            return correct
-    # 2. Spellchecker
-    spell = SpellChecker()
-    corrected = ' '.join([spell.correction(w) or w for w in norm_phrase.split()])
-    if corrected != norm_phrase:
-        print(f"[DEBUG] Spellchecker: '{norm_phrase}' -> '{corrected}'")
-        norm_phrase = corrected
-    # 3. Phonetic matching
-    input_phon = phonetics.metaphone(norm_phrase)
-    for cand in candidates:
-        if phonetics.metaphone(cand.lower()) == input_phon:
-            print(f"[DEBUG] Phonetic match: '{norm_phrase}' -> '{cand}'")
-            return cand
-    # 4. Fuzzy matching
-    match = get_close_matches(norm_phrase, candidates, n=1, cutoff=0.6)
-    if match:
-        print(f"[DEBUG] Fuzzy match: '{norm_phrase}' -> '{match[0]}'")
-        return match[0]
-    print(f"[DEBUG] No robust match found for '{phrase}', returning as is.")
-    return phrase
-
-def fuzzy_find(query: str, candidates: List[str], threshold: float = 0.8) -> List[str]:
-    import difflib
-    norm_query = normalize_colname(query)
-    matches = []
-    for cand in candidates:
-        norm_cand = normalize_colname(cand)
-        if norm_query in norm_cand or norm_cand in norm_query:
-            matches.append(cand)
-        else:
-            ratio = difflib.SequenceMatcher(None, norm_query, norm_cand).ratio()
-            if ratio >= threshold:
-                matches.append(cand)
-    return matches
-
-def extract_stat_phrase(query: str) -> str:
-    # If a math operator is present, extract the phrase containing it (before ' in ' or ' for ')
-    lowered = query.lower()
-    if any(op in lowered for op in ['+', '-', '/', '*']):
-        # Find the first ' in ' or ' for ' after the operator, and take everything before it
-        for kw in [' in ', ' for ']:
-            idx = lowered.find(kw)
-            if idx != -1:
-                # Only use if the operator is before the keyword
-                op_idx = max(lowered.find(op) for op in ['+', '-', '/', '*'])
-                if op_idx != -1 and op_idx < idx:
-                    stat_phrase = query[:idx].strip()
-                    print(f"[DEBUG] Extracted stat formula phrase before '{kw.strip()}': '{stat_phrase}'")
-                    return stat_phrase
-        # No 'in' or 'for' after operator, use full query
-        print(f"[DEBUG] Extracted stat formula phrase (full query): '{query.strip()}'")
-        return query.strip()
-    # Otherwise, use the old logic
-    if ' by ' in lowered:
-        stat_phrase = lowered.split(' by ')[-1].strip()
-        print(f"[DEBUG] Extracted stat phrase after last 'by': '{stat_phrase}'")
-        return stat_phrase
-    # Fallback: after last 'in' or 'for'
-    for kw in [' in ', ' for ']:
-        if kw in lowered:
-            stat_phrase = lowered.split(kw)[-1].strip()
-            print(f"[DEBUG] Extracted stat phrase after last '{kw.strip()}': '{stat_phrase}'")
-            return stat_phrase
-    print(f"[DEBUG] No explicit stat phrase found, using full query.")
-    return query
-
-def extract_stat_formula(query: str) -> dict:
+class SimplifiedPreprocessor:
     """
-    Detects and parses stat formulas with improved mapping accuracy.
+    Simplified preprocessor that handles core cases correctly.
+    Uses clear, debuggable extraction with minimal interdependencies.
     """
-    alias_map = get_alias_to_column_map()
-    stat_phrase = extract_stat_phrase(query)
-    stat_phrase = re.split(r' in | for ', stat_phrase)[0].strip()
     
-    # Look for math operators
-    ops = re.findall(r'[+\-/*]', stat_phrase)
-    if not ops:
+    def __init__(self):
+        self.alias_map = get_alias_to_column_map()
+        self.teams = get_all_teams()
+        self.players = get_all_players()
+        self.positions = get_all_positions()
+        self.leagues = get_all_leagues()
+        
+        # Core league mappings
+        self.league_keywords = {
+            'premier league': 'Premier League',
+            'epl': 'Premier League',
+            'pl': 'Premier League',
+            'la liga': 'La Liga',
+            'laliga': 'La Liga',
+            'spain': 'La Liga',
+            'bundesliga': 'Bundesliga',
+            'germany': 'Bundesliga',
+            'serie a': 'Serie A',
+            'seriea': 'Serie A',
+            'italy': 'Serie A',
+            'ligue 1': 'Ligue 1',
+            'ligue1': 'Ligue 1',
+            'france': 'Ligue 1',
+            'eredivisie': 'Eredivisie',
+            'netherlands': 'Eredivisie',
+            'championship': 'Championship',
+            'mls': 'MLS'
+        }
+        
+        # League aliases for multi-league queries
+        self.league_aliases = {
+            'top 5 leagues': ['Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'],
+            'big 5': ['Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'],
+            'top five': ['Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'],
+            'big five': ['Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'],
+            'top 7 leagues': ['Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1', 'Eredivisie', 'Liga Portugal']
+        }
+        
+        # Position mappings
+        self.position_keywords = {
+            'striker': 'Striker',
+            'strikers': 'Striker',
+            'forward': 'Striker', 
+            'forwards': 'Striker',
+            'cf': 'Striker',
+            'st': 'Striker',
+            'defender': ['Centre-back', 'Full-back'],
+            'defenders': ['Centre-back', 'Full-back'],
+            'cb': 'Centre-back',
+            'centreback': 'Centre-back',
+            'centre-back': 'Centre-back',
+            'fullback': 'Full-back',
+            'full-back': 'Full-back',
+            'lb': 'Full-back',
+            'rb': 'Full-back',
+            'midfielder': 'Midfielder',
+            'midfielders': 'Midfielder',
+            'cm': 'Midfielder',
+            'dm': 'Midfielder',
+            'am': 'Midfielder',
+            'winger': 'Winger',
+            'wingers': 'Winger',
+            'lw': 'Winger',
+            'rw': 'Winger',
+            'goalkeeper': 'Goalkeeper',
+            'goalkeepers': 'Goalkeeper',
+            'gk': 'Goalkeeper',
+            'keeper': 'Goalkeeper'
+        }
+
+    def preprocess_query(self, query: str) -> Dict[str, Any]:
+        """
+        Main preprocessing function with clear, sequential steps.
+        """
+        result = {"original": query}
+        lowered = query.lower().strip()
+        
+        # Step 1: Query type classification (LLM-based)
+        query_type = classify_query_type(query).strip().replace(':', '').upper()
+        result["query_type"] = query_type
+        
+        # Step 2: Extract basic numeric filters
+        self._extract_top_n(lowered, result)
+        self._extract_age_filters(lowered, result)
+        self._extract_minutes_filters(lowered, result)
+        
+        # Step 3: Extract entities (order matters - most specific first)
+        self._extract_player_reports(lowered, result)
+        self._extract_stat_definitions(lowered, result)
+        
+        # Step 4: Extract filters and stats (if not already handled)
+        if result["query_type"] not in ["PLAYER_REPORT", "STAT_DEFINITION"]:
+            self._extract_leagues(lowered, result)
+            self._extract_positions(lowered, result)
+            self._extract_teams(lowered, result)
+            self._extract_stats_and_formulas(lowered, result)
+            self._extract_stat_value_filters(lowered, result)
+        
+        # Step 5: Post-processing and validation
+        self._validate_and_cleanup(result)
+        
+        return result
+
+    def _extract_top_n(self, lowered: str, result: Dict[str, Any]) -> None:
+        """Extract top N with clear patterns."""
+        patterns = [
+            r"(?:top|best|highest)\s*(\d+)",
+            r"(\d+)\s*(?:best|top)"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, lowered)
+            if match:
+                result["top_n"] = int(match.group(1))
+                break
+
+    def _extract_age_filters(self, lowered: str, result: Dict[str, Any]) -> None:
+        """Extract age filters with clear patterns."""
+        # U21, U-25, U23 patterns
+        u_match = re.search(r"u-?(\d+)", lowered)
+        if u_match:
+            result["age_filter"] = {"op": "<", "value": int(u_match.group(1))}
+            return
+        
+        # Standard age patterns
+        age_patterns = [
+            (r"under\s*(\d+)", "<"),
+            (r"over\s*(\d+)", ">"),
+            (r"above\s*(\d+)", ">"),
+            (r"below\s*(\d+)", "<"),
+            (r"age\s*(\d+)", "==")
+        ]
+        
+        for pattern, op in age_patterns:
+            match = re.search(pattern, lowered)
+            if match:
+                result["age_filter"] = {"op": op, "value": int(match.group(1))}
+                break
+
+    def _extract_minutes_filters(self, lowered: str, result: Dict[str, Any]) -> None:
+        """Extract minutes played filters."""
+        minutes_patterns = [
+            (r"(\d+)\+\s*minutes?", ">="),
+            (r"more than (\d+) minutes?", ">"),
+            (r"at least (\d+) minutes?", ">="),
+            (r"over (\d+) minutes?", ">"),
+            (r"less than (\d+) minutes?", "<"),
+            (r"under (\d+) minutes?", "<")
+        ]
+        
+        for pattern, op in minutes_patterns:
+            match = re.search(pattern, lowered)
+            if match:
+                result["minutes_op"] = op
+                result["minutes_value"] = int(match.group(1))
+                break
+
+    def _extract_player_reports(self, lowered: str, result: Dict[str, Any]) -> None:
+        """Extract player report requests."""
+        report_match = re.search(r'(\w+(?:\s+\w+)*)\s+report\b', lowered)
+        if report_match:
+            result["query_type"] = "PLAYER_REPORT"
+            player_name = report_match.group(1).strip()
+            
+            # Simple player name matching
+            matched_player = self._find_player_name(player_name)
+            result["player"] = matched_player
+
+    def _extract_stat_definitions(self, lowered: str, result: Dict[str, Any]) -> None:
+        """Extract stat definition requests."""
+        definition_patterns = [
+            r'define\s+(.+)',
+            r'what\s+is\s+(.+)',
+            r'explain\s+(.+)',
+            r'(.+)\s+definition',
+            r'(.+)\s+meaning',
+            r'how\s+is\s+(.+)\s+calculated',
+            r'what\s+does\s+(.+)\s+mean'
+        ]
+        
+        for pattern in definition_patterns:
+            match = re.search(pattern, lowered)
+            if match:
+                result["query_type"] = "STAT_DEFINITION"
+                stat_phrase = match.group(1).strip()
+                
+                # Clean up the stat phrase
+                clean_words = ['statistic', 'stat', 'metric', 'the', 'a', 'an']
+                for word in clean_words:
+                    stat_phrase = re.sub(rf'\b{word}\b', '', stat_phrase, flags=re.IGNORECASE).strip()
+                
+                # Map to actual stat
+                mapped_stat = self._map_stat_phrase(stat_phrase)
+                result["stat"] = mapped_stat
+                break
+
+    def _extract_leagues(self, lowered: str, result: Dict[str, Any]) -> None:
+        """Extract leagues with multi-league support."""
+        found_leagues = []
+        
+        # Check for league aliases first
+        for alias, league_list in self.league_aliases.items():
+            if alias in lowered:
+                result["league"] = league_list
+                result["_league_is_alias"] = True
+                return
+        
+        # Check for individual leagues
+        for keyword, league_name in self.league_keywords.items():
+            if keyword in lowered and league_name not in found_leagues:
+                found_leagues.append(league_name)
+        
+        # Handle "and" patterns for multi-league
+        if " and " in lowered:
+            parts = [part.strip() for part in lowered.split(" and ")]
+            for part in parts:
+                for keyword, league_name in self.league_keywords.items():
+                    if keyword in part and league_name not in found_leagues:
+                        found_leagues.append(league_name)
+        
+        if found_leagues:
+            result["league"] = found_leagues[0] if len(found_leagues) == 1 else found_leagues
+
+    def _extract_positions(self, lowered: str, result: Dict[str, Any]) -> None:
+        """Extract positions with keyword matching."""
+        for keyword, position in self.position_keywords.items():
+            if re.search(rf'\b{keyword}\b', lowered):
+                result["position"] = position
+                break
+
+    def _extract_teams(self, lowered: str, result: Dict[str, Any]) -> None:
+        """Extract teams (conservative approach)."""
+        # Only extract teams if query is clearly team-focused
+        team_indicators = ['from', 'at', 'playing for']
+        if any(indicator in lowered for indicator in team_indicators):
+            matches = get_close_matches(lowered, [team.lower() for team in self.teams], n=1, cutoff=0.8)
+            if matches:
+                # Find original case team name
+                for team in self.teams:
+                    if team.lower() == matches[0]:
+                        result["team"] = team
+                        break
+
+    def _extract_stats_and_formulas(self, lowered: str, result: Dict[str, Any]) -> None:
+        """Extract stats and handle formula detection."""
+        # Check for math operators first (formula detection)
+        if any(op in lowered for op in ['+', '-', '/', '*']) and not any(word in lowered for word in ['report', 'define', 'what is']):
+            formula_result = self._extract_stat_formula(lowered)
+            if formula_result:
+                result["stat_formula"] = formula_result
+                result["stat"] = formula_result['expr']
+                return
+        
+        # Extract regular stats
+        stat = self._extract_single_stat(lowered)
+        if stat:
+            result["stat"] = stat
+
+    def _extract_single_stat(self, lowered: str) -> Optional[str]:
+        """Extract a single stat from the query."""
+        # Get the main part of the query (before location/filters)
+        main_part = lowered
+        for delimiter in [' in ', ' for ', ' from ', ' with ']:
+            if delimiter in lowered:
+                parts = lowered.split(delimiter)
+                if len(parts) > 1:
+                    # Take the part that's most likely to contain the stat
+                    if delimiter == ' with ' and any(word in parts[1] for word in ['than', 'least', 'most']):
+                        # "with more than X goals" - stat is after 'with'
+                        continue
+                    else:
+                        main_part = parts[0]
+                        break
+        
+        # Look for stat keywords in the main part
+        best_match = None
+        best_score = 0
+        
+        for alias, column in self.alias_map.items():
+            if alias in main_part:
+                # Prefer longer, more specific matches
+                score = len(alias)
+                if score > best_score:
+                    best_match = column
+                    best_score = score
+        
+        return best_match
+
+    def _extract_stat_formula(self, lowered: str) -> Optional[Dict[str, Any]]:
+        """Extract and parse stat formulas."""
+        # Find operators
+        ops = re.findall(r'[+\-/*]', lowered)
+        if not ops:
+            return None
+        
+        # Split by operators and clean parts
+        parts = re.split(r'[+\-/*]', lowered)
+        
+        # Clean each part and map to columns
+        mapped_cols = []
+        safe_vars = []
+        safe_map = {}
+        
+        for part in parts:
+            part = part.strip()
+            
+            # Remove common prefixes
+            for prefix in ["most ", "top ", "highest ", "best "]:
+                if part.startswith(prefix):
+                    part = part[len(prefix):].strip()
+                    break
+            
+            # Remove numbers at start
+            part = re.sub(r'^\d+\s*', '', part)
+            
+            # Map the part to a column
+            mapped_col = self._map_stat_phrase(part)
+            if not mapped_col:
+                return None  # If we can't map a part, fail the formula
+            
+            mapped_cols.append(mapped_col)
+            safe_var = self._make_safe_var(mapped_col)
+            safe_vars.append(safe_var)
+            safe_map[safe_var] = mapped_col
+        
+        # Build expressions
+        safe_expr = ''
+        display_expr = ''
+        for i, (safe_var, mapped_col) in enumerate(zip(safe_vars, mapped_cols)):
+            safe_expr += f'safe_map["{safe_var}"]'
+            display_expr += f'({mapped_col})'
+            if i < len(ops):
+                safe_expr += ops[i]
+                display_expr += ops[i]
+        
+        return {
+            'expr': safe_expr,
+            'display_expr': display_expr,
+            'columns': mapped_cols,
+            'ops': ops,
+            'safe_map': safe_map
+        }
+
+    def _extract_stat_value_filters(self, lowered: str, result: Dict[str, Any]) -> None:
+        """Extract stat value filters (e.g., 'more than 0.5 goals')."""
+        patterns = [
+            (r"at least ([\d.]+) (\w+(?:\s+\w+)*)", ">="),
+            (r"more than ([\d.]+) (\w+(?:\s+\w+)*)", ">"),
+            (r"less than ([\d.]+) (\w+(?:\s+\w+)*)", "<"),
+            (r"under ([\d.]+) (\w+(?:\s+\w+)*)", "<"),
+            (r"over ([\d.]+) (\w+(?:\s+\w+)*)", ">"),
+            (r"exactly ([\d.]+) (\w+(?:\s+\w+)*)", "=="),
+            (r"with ([\d.]+)\+ (\w+(?:\s+\w+)*)", ">=")  # "with 0.5+ goals"
+        ]
+        
+        for pattern, op in patterns:
+            match = re.search(pattern, lowered)
+            if match:
+                value = float(match.group(1))
+                stat_phrase = match.group(2).strip()
+                
+                # Map stat phrase to actual column
+                mapped_stat = self._map_stat_phrase(stat_phrase)
+                if mapped_stat:
+                    result["stat"] = mapped_stat
+                    result["stat_op"] = op
+                    result["stat_value"] = value
+                break
+
+    def _map_stat_phrase(self, phrase: str) -> Optional[str]:
+        """Map a stat phrase to an actual column name."""
+        phrase = phrase.strip().lower()
+        
+        # Direct alias match
+        if phrase in self.alias_map:
+            return self.alias_map[phrase]
+        
+        # Normalized match
+        norm_phrase = normalize_colname(phrase)
+        if norm_phrase in self.alias_map:
+            return self.alias_map[norm_phrase]
+        
+        # Fuzzy match (high threshold)
+        matches = get_close_matches(phrase, list(self.alias_map.keys()), n=1, cutoff=0.8)
+        if matches:
+            return self.alias_map[matches[0]]
+        
         return None
 
-    # Split by operators, map each part
-    parts = re.split(r'[+\-/*]', stat_phrase)
-    print(f"[DEBUG] Formula parts: {parts}, ops: {ops}")
-    
-    mapped_cols = []
-    safe_vars = []
-    safe_map = {}
-    
-    # IMPROVED: More precise forced mapping
-    forced_map = {
-        'goals': 'Goals per 90',
-        'goal': 'Goals per 90',
-        'assists': 'Assists per 90', 
-        'assist': 'Assists per 90',
-        'xg': 'xG per 90',
-        'xa': 'xA per 90',
-        'npxg': 'npxG per 90',
-        'expected goals': 'xG per 90',
-        'expected assists': 'xA per 90',
-        # Add ratios
-        'goals per xg': 'Goals per xG',
-        'assists per xa': 'Assists per xA',
-    }
-    
-    prefixes = ["most ", "top ", "highest ", "best "]
-    
-    for part in parts:
-        part = part.strip()
-        part_lc = part.lower().strip()
+    def _find_player_name(self, query_name: str) -> str:
+        """Find player name with simple matching."""
+        query_name = query_name.strip().lower()
         
-        # Remove prefixes
-        for prefix in prefixes:
-            if part_lc.startswith(prefix):
-                part_lc = part_lc[len(prefix):].strip()
-                break
-                
-        # Remove leading numbers
-        part_lc = re.sub(r'^\d+\s*', '', part_lc)
+        # Exact match
+        for player in self.players:
+            if player.lower() == query_name:
+                return player
         
-        print(f"[DEBUG] Processing formula part: '{part}' -> '{part_lc}'")
+        # Famous player mappings
+        famous_players = {
+            'haaland': 'E. Haaland',
+            'messi': 'L. Messi',
+            'ronaldo': 'Cristiano Ronaldo',
+            'mbappe': 'K. Mbappé',
+            'kane': 'Harry Kane',
+            'salah': 'Mohamed Salah'
+        }
         
-        # IMPROVED: Try exact forced mapping first
-        mapped_col = None
-        for forced_key, forced_col in forced_map.items():
-            if part_lc == forced_key or forced_key in part_lc:
-                mapped_col = forced_col
-                print(f"[DEBUG] Forced mapping: '{part_lc}' -> '{mapped_col}'")
-                break
+        if query_name in famous_players:
+            mapped_name = famous_players[query_name]
+            if mapped_name in self.players:
+                return mapped_name
         
-        if not mapped_col:
-            # Try exact alias match
-            norm_part = normalize_colname(part_lc)
-            if norm_part in alias_map:
-                mapped_col = alias_map[norm_part]
-                print(f"[DEBUG] Exact alias match: '{norm_part}' -> '{mapped_col}'")
-            else:
-                # IMPROVED: Stricter fuzzy matching - only for xG/xA type stats
-                if any(x in part_lc for x in ['xg', 'xa', 'npxg', 'expected']):
-                    corrected = robust_correction(part_lc, list(alias_map.keys()))
-                    match = get_close_matches(corrected, list(alias_map.keys()), n=1, cutoff=0.9)  # Higher cutoff
-                    if match:
-                        mapped_col = alias_map[match[0]]
-                        print(f"[DEBUG] Strict fuzzy match for xG/xA: '{part_lc}' -> '{mapped_col}'")
-                
-                if not mapped_col:
-                    # Last resort: direct column name search
-                    for col_name in alias_map.values():
-                        if part_lc in col_name.lower() or col_name.lower().startswith(part_lc):
-                            mapped_col = col_name
-                            print(f"[DEBUG] Direct column search: '{part_lc}' -> '{mapped_col}'")
-                            break
-        
-        if not mapped_col:
-            print(f"[DEBUG] WARNING: Could not map formula part '{part_lc}', using as-is")
-            mapped_col = part
-            
-        mapped_cols.append(mapped_col)
-        safe_var = mapped_col.replace(' ', '_').replace('.', '_').replace('%', 'pct').replace('(', '').replace(')', '').replace('-', '_').replace('+', 'plus').replace('/', '_')
-        safe_vars.append(safe_var)
-        safe_map[safe_var] = mapped_col
-
-    # Build expressions
-    safe_expr = ''
-    display_expr = ''
-    for i, safe_var in enumerate(safe_vars):
-        safe_expr += f'safe_map["{safe_var}"]'
-        display_expr += f'({mapped_cols[i]})'
-        if i < len(ops):
-            safe_expr += ops[i]
-            display_expr += ops[i]
-
-    print(f"[DEBUG] Final formula - safe_expr: {safe_expr}, display_expr: {display_expr}")
-    return {'expr': safe_expr, 'display_expr': display_expr, 'columns': mapped_cols, 'ops': ops, 'safe_map': safe_map}
-
-def extract_stats(query: str) -> List[str]:
-    alias_map = get_alias_to_column_map()
-    stat_phrase = extract_stat_phrase(query)
-    # Robust correction pipeline for stat phrase
-    all_aliases = list(alias_map.keys())
-    corrected_stat = robust_correction(stat_phrase, all_aliases)
-    matches = get_close_matches(corrected_stat, all_aliases, n=3, cutoff=0.6)
-    print(f"[DEBUG] Fuzzy stat matches for phrase '{corrected_stat}': {matches}")
-    if matches:
-        chosen_stats = [alias_map[m] for m in matches]
-        print(f"[DEBUG] Chosen stat columns from fuzzy matches: {chosen_stats}")
-        return chosen_stats
-    # Substring and lowercased matching
-    norm_corrected = corrected_stat.lower().replace(' ', '')
-    substring_matches = [col for alias, col in alias_map.items() if norm_corrected in alias.lower().replace(' ', '')]
-    if substring_matches:
-        print(f"[DEBUG] Substring stat matches for phrase '{corrected_stat}': {substring_matches}")
-        return substring_matches
-    # Fallback: try default mapping for generic terms
-    for alias, col in alias_map.items():
-        if alias in corrected_stat:
-            print(f"[DEBUG] Fallback: matched alias '{alias}' in stat phrase '{corrected_stat}' to column '{col}'")
-            return [col]
-    print(f"[DEBUG] No stat match found for phrase '{corrected_stat}'")
-    return []
-
-def extract_stat_value_filter(query: str):
-    # Pattern: 'at least' or 'atleast'
-    match = re.search(r"at ?least ([0-9.]+) ([\w\s+/-]+)", query.lower())
-    if match:
-        value = float(match.group(1))
-        stat_phrase = match.group(2).strip()
-        return {"stat": stat_phrase, "stat_op": ">=", "stat_value": value}
-    # Pattern: 'more than 10 assists'
-    match = re.search(r"more than ([0-9.]+) ([\w\s+/-]+)", query.lower())
-    if match:
-        value = float(match.group(1))
-        stat_phrase = match.group(2).strip()
-        return {"stat": stat_phrase, "stat_op": ">", "stat_value": value}
-    # Pattern: 'less than 5 clean sheets'
-    match = re.search(r"less than ([0-9.]+) ([\w\s+/-]+)", query.lower())
-    if match:
-        value = float(match.group(1))
-        stat_phrase = match.group(2).strip()
-        return {"stat": stat_phrase, "stat_op": "<", "stat_value": value}
-    # Pattern: 'at most' or 'atmost'
-    match = re.search(r"at ?most ([0-9.]+) ([\w\s+/-]+)", query.lower())
-    if match:
-        value = float(match.group(1))
-        stat_phrase = match.group(2).strip()
-        return {"stat": stat_phrase, "stat_op": "<=", "stat_value": value}
-    # Pattern: 'exactly 2 goals'
-    match = re.search(r"exactly ([0-9.]+) ([\w\s+/-]+)", query.lower())
-    if match:
-        value = float(match.group(1))
-        stat_phrase = match.group(2).strip()
-        return {"stat": stat_phrase, "stat_op": "==", "stat_value": value}
-    return None
-
-def prioritize_leagues(matched_leagues):
-    priority = {name: i for i, name in enumerate(LEAGUE_PRIORITY)}
-    return sorted(
-        matched_leagues,
-        key=lambda x: priority.get(x, len(priority))
-    )
-
-def extract_minutes_filter(query: str):
-    """Extract minutes played filters like '500+ minutes', 'more than 1000 minutes', etc."""
-    # Pattern: '500+ minutes' or '500 + minutes'
-    match = re.search(r"(\d+)\s*\+\s*minutes?", query.lower())
-    if match:
-        value = int(match.group(1))
-        return {"minutes_op": ">=", "minutes_value": value}
-    
-    # Pattern: 'more than 500 minutes'
-    match = re.search(r"more than (\d+) minutes?", query.lower())
-    if match:
-        value = int(match.group(1))
-        return {"minutes_op": ">", "minutes_value": value}
-    
-    # Pattern: 'at least 500 minutes'
-    match = re.search(r"at ?least (\d+) minutes?", query.lower())
-    if match:
-        value = int(match.group(1))
-        return {"minutes_op": ">=", "minutes_value": value}
-    
-    # Pattern: 'less than 500 minutes'
-    match = re.search(r"less than (\d+) minutes?", query.lower())
-    if match:
-        value = int(match.group(1))
-        return {"minutes_op": "<", "minutes_value": value}
-    
-    # Pattern: 'under 500 minutes'
-    match = re.search(r"under (\d+) minutes?", query.lower())
-    if match:
-        value = int(match.group(1))
-        return {"minutes_op": "<", "minutes_value": value}
-    
-    # Pattern: 'over 500 minutes'
-    match = re.search(r"over (\d+) minutes?", query.lower())
-    if match:
-        value = int(match.group(1))
-        return {"minutes_op": ">", "minutes_value": value}
-    
-    return None
-
-def find_player_by_name(query_name: str, all_players: List[str]) -> str:
-    """
-    Improved player name matching with better accuracy.
-    """
-    query_name = query_name.strip().lower()
-    
-    # Direct exact matches (case insensitive)
-    for player in all_players:
-        if player.lower() == query_name:
-            return player
-    
-    # Common name mappings for famous players
-    famous_players = {
-        'messi': ['L. Messi', 'Lionel Messi', 'Leo Messi'],
-        'ronaldo': ['Cristiano Ronaldo', 'C. Ronaldo'],
-        'cristiano ronaldo': ['Cristiano Ronaldo', 'C. Ronaldo'], 
-        'haaland': ['E. Haaland', 'Erling Haaland'],
-        'mbappe': ['K. Mbappé', 'Kylian Mbappé'],
-        'neymar': ['Neymar Jr', 'Neymar'],
-        'salah': ['Mohamed Salah', 'M. Salah'],
-        'de bruyne': ['K. De Bruyne', 'Kevin De Bruyne'],
-        'lewandowski': ['R. Lewandowski', 'Robert Lewandowski'],
-        'benzema': ['K. Benzema', 'Karim Benzema'],
-        'modric': ['L. Modrić', 'Luka Modrić'],
-        'pedri': ['Pedri', 'Pedro González'],
-        'gavi': ['Gavi', 'Pablo Gavira'],
-        'bellingham': ['J. Bellingham', 'Jude Bellingham'],
-        'vinicius': ['Vinícius Jr.', 'Vini Jr.'],
-        'son': ['Heung-min Son', 'H. Son'],
-        'kane': ['Harry Kane', 'H. Kane'],
-        'kdb': ['K. De Bruyne', 'Kevin De Bruyne'],
-    }
-    
-    # Check famous player mappings
-    if query_name in famous_players:
-        for variant in famous_players[query_name]:
-            for player in all_players:
-                if player.lower() == variant.lower():
+        # High-confidence fuzzy match
+        matches = get_close_matches(query_name, [p.lower() for p in self.players], n=1, cutoff=0.9)
+        if matches:
+            for player in self.players:
+                if player.lower() == matches[0]:
                     return player
-    
-    # Partial name matching for compound names
-    query_parts = query_name.split()
-    if len(query_parts) > 1:
-        for player in all_players:
-            player_lower = player.lower()
-            # Check if all query parts are in the player name
-            if all(part in player_lower for part in query_parts):
-                return player
-    
-    # Last name matching (for single names)
-    if len(query_parts) == 1:
-        single_name = query_parts[0]
-        for player in all_players:
-            player_parts = player.lower().split()
-            # Match last name or if single name is in the player name
-            if (len(player_parts) > 1 and player_parts[-1] == single_name) or single_name in player.lower():
-                return player
-    
-    # Only use fuzzy matching as last resort with high threshold
-    matches = get_close_matches(query_name, [p.lower() for p in all_players], n=1, cutoff=0.85)
-    if matches:
-        # Find the original case version
-        for player in all_players:
-            if player.lower() == matches[0]:
-                return player
-    
-    return query_name  # Return original if no match found
+        
+        return query_name  # Return original if no match
 
-def preprocess_query(query: str) -> Dict[str, Any]:
-    result = {"original": query}
-    lowered = query.lower()
+    def _make_safe_var(self, col_name: str) -> str:
+        """Convert column name to safe variable name."""
+        return (col_name.replace(' ', '_')
+                       .replace('.', '_')
+                       .replace('%', 'pct')
+                       .replace('(', '')
+                       .replace(')', '')
+                       .replace('-', '_')
+                       .replace('+', 'plus')
+                       .replace('/', '_'))
 
-    # LLM-powered query type classification
-    query_type = classify_query_type(query)
-    query_type = query_type.strip().replace(':', '').upper()
-    result["query_type"] = query_type
+    def _validate_and_cleanup(self, result: Dict[str, Any]) -> None:
+        """Final validation and cleanup."""
+        # Set default top_n if missing for TOP_N queries
+        if result.get("query_type") == "TOP_N" and "top_n" not in result:
+            result["top_n"] = 5
+        
+        # Ensure we have a stat for stat-based queries
+        query_type = result.get("query_type")
+        if query_type in ["TOP_N", "FILTER"] and not result.get("stat") and not result.get("stat_formula"):
+            # Try one more time with a simpler approach
+            simple_stat = self._extract_simple_stat_fallback(result["original"])
+            if simple_stat:
+                result["stat"] = simple_stat
 
-    # 1. Top N / Best N
-    top_match = re.search(r"(?:top|best)\s*(\d+)", lowered)
-    if top_match:
-        result["top_n"] = int(top_match.group(1))
-
-    age_match = re.search(r"under\s*(\d+)", lowered)
-    if age_match:
-        result["age_filter"] = {"op": "<", "value": int(age_match.group(1))}
-    else:
-        age_match = re.search(r"over\s*(\d+)", lowered)
-        if age_match:
-            result["age_filter"] = {"op": ">", "value": int(age_match.group(1))}
-        else:
-            age_match = re.search(r"age\s*(\d+)", lowered)
-            if age_match:
-                result["age_filter"] = {"op": "==", "value": int(age_match.group(1))}
-            else:
-                # NEW: Handle U25, U-25, U21, etc. patterns
-                u_age_match = re.search(r"u-?(\d+)", lowered)
-                if u_age_match:
-                    age_value = int(u_age_match.group(1))
-                    result["age_filter"] = {"op": "<", "value": age_value}
-                    print(f"[DEBUG] Detected 'U{age_value}' pattern, setting age_filter to < {age_value}")
-
-    # Add this after the query type classification
-    if re.search(r'\b(\w+(?:\s+\w+)*)\s+report\b', query.lower()):
-        player_match = re.search(r'\b(\w+(?:\s+\w+)*)\s+report\b', query.lower())
-        if player_match:
-            result["query_type"] = "PLAYER_REPORT"
-            player_name = player_match.group(1).strip()
-            
-            # Use improved player matching
-            players = get_all_players()
-            matched_player = find_player_by_name(player_name, players)
-            result["player"] = matched_player
-    
-    # 3. Season/timeframe extraction
-    season_match = re.search(r"(\d{4}/\d{2}|this season|last season)", lowered)
-    if season_match:
-        result["season"] = season_match.group(1)
-
-    # 4. Stat/metric extraction (only for TOP_N or FILTER)
-    stat_formula = extract_stat_formula(query)
-    if stat_formula:
-        result["stat_formula"] = stat_formula
-        result["stat"] = stat_formula['expr']
-        # Force query_type to TOP_N for formula queries
-        result["query_type"] = "TOP_N"
-    elif query_type in ("TOP_N", "FILTER"):
-        found_stats = extract_stats(query)
-        if found_stats:
-            result["stat"] = found_stats[0] if len(found_stats) == 1 else found_stats
-    # --- PATCH: Single-stat forced mapping fallback ---
-    if (query_type in ("TOP_N", "FILTER")) and not result.get("stat"):
-        # Forced mapping for common stats
-        forced_map = {
+    def _extract_simple_stat_fallback(self, query: str) -> Optional[str]:
+        """Simple fallback stat extraction for common cases."""
+        lowered = query.lower()
+        
+        # Simple keyword mapping
+        simple_mappings = {
             'goals': 'Goals per 90',
-            'goal': 'Goals per 90',
-            'goals per 90': 'Goals per 90',
-            'goal per 90': 'Goals per 90',
-            'assists': 'Assists per 90',
-            'assist': 'Assists per 90',
-            'assists per 90': 'Assists per 90',
-            'assist per 90': 'Assists per 90',
+            'assists': 'Assists per 90', 
             'xg': 'xG per 90',
             'xa': 'xA per 90',
-            'npxg': 'npxG per 90',
+            'passes': 'Passes per 90',
+            'tackles': 'Sliding tackles per 90'
         }
-        prefixes = ["most ", "top ", "highest ", "best "]
-        lowered_query = query.lower().strip()
-        for prefix in prefixes:
-            if lowered_query.startswith(prefix):
-                lowered_query = lowered_query[len(prefix):].strip()
-                break
-        # Try forced map
-        for forced, mapped in forced_map.items():
-            if re.search(rf"\b{re.escape(forced)}\b", lowered_query):
-                result["stat"] = mapped
-                print(f"[DEBUG] [PATCH] Single-stat fallback: '{forced}' mapped to '{mapped}'")
-                break
-        # If still not found, try alias map
-        if not result.get("stat"):
-            alias_map = get_alias_to_column_map()
-            # PATCH: Prefer the longest matching alias
-            best_alias = None
-            for alias in sorted(alias_map.keys(), key=len, reverse=True):
-                if re.search(rf"\b{re.escape(alias)}\\b", lowered_query):
-                    best_alias = alias
-                    break
-            if best_alias:
-                result["stat"] = alias_map[best_alias]
-                print(f"[DEBUG] [PATCH] Single-stat alias fallback: '{best_alias}' mapped to '{alias_map[best_alias]}'")
-
-    # 5. Team extraction (using fuzzy matching)
-    teams = get_all_teams()
-    found_teams = fuzzy_find(query, teams, threshold=0.8)
-    if found_teams:
-        result["team"] = found_teams[0] if len(found_teams) == 1 else found_teams
-
-    # 6. Player extraction (using fuzzy matching)
-    players = get_all_players()
-    found_players = fuzzy_find(query, players, threshold=0.8)
-    if found_players:
-        result["player"] = found_players[0] if len(found_players) == 1 else found_players
-
-    # 7. Position extraction (using fuzzy matching)
-    positions = get_all_positions()
-    # Add robust mapping for common football position groups
-    lowered_query = query.lower()
-# In the position extraction section, be more specific:
-    if 'striker' in lowered_query and 'winger' not in lowered_query:
-        found_positions = ['Striker']
-    elif 'midfielder' in lowered_query:
-        found_positions = ['Midfielder'] 
-    elif 'defender' in lowered_query:
-        found_positions = ['Centre-back', 'Full-back']
-    elif 'goalkeeper' in lowered_query:
-        found_positions = ['Goalkeeper']
-    else:
-        found_positions = fuzzy_find(query, positions, threshold=0.8)
-    if found_positions:
-        result["position"] = found_positions[0] if len(found_positions) == 1 else found_positions
-
-    # 8. League extraction (robust pipeline)
-    leagues = get_all_leagues()
-    lowered_query = query.lower()
-    # Only consider the part after ' in ' or ' for ' for league extraction
-    league_part = re.split(r' in | for ', lowered_query)
-    if len(league_part) > 1:
-        league_str = league_part[1]
-    else:
-        league_str = lowered_query
-    league_phrases = re.split(r'\band\b|,|&', league_str)
-    found_leagues = []
-    def norm_league(s):
-        return s.lower().strip().replace('.', '').replace('-', ' ').replace(' ', '')
-    norm_league_map = {norm_league(lg): lg for lg in leagues}
-    # --- Remove age/irrelevant words from league phrases ---
-    age_patterns = [r'under ?\d+', r'u-?\d+', r'over ?\d+', r'age ?\d+']
-    def clean_league_phrase(phrase):
-        # Remove age patterns more broadly
-        age_patterns = [r'under ?\d+', r'u-?\d+', r'over ?\d+', r'age ?\d+']
-        for pat in age_patterns:
-            phrase = re.sub(pat, '', phrase, flags=re.IGNORECASE)
         
-        # Remove other irrelevant words that might interfere
-        phrase = re.sub(r'\b(players?|best|top|most|highest)\b', '', phrase, flags=re.IGNORECASE)
+        for keyword, stat in simple_mappings.items():
+            if keyword in lowered:
+                return stat
         
-        return phrase.strip()
-    
-    for phrase in league_phrases:
-        orig_phrase = phrase
-        phrase = clean_league_phrase(phrase)
-        phrase = phrase.strip().replace('.', '').replace('-', ' ')
-        norm_phrase = phrase.lower().replace(' ', '')
-        print(f"[DEBUG] Trying to match league phrase: '{orig_phrase}' cleaned to '{phrase}' normalized to '{norm_phrase}'")
-        # 1. Try exact normalized match
-        if norm_phrase in norm_league_map:
-            matched_league = norm_league_map[norm_phrase]
-            print(f"[DEBUG] Normalized match: '{norm_phrase}' -> '{matched_league}'")
-            found_leagues.append(matched_league)
-            continue
-        # PATCH: Try matching last 3, 2, or 1 words as league
-        words = phrase.split()
-        matched = False
-        for n in range(3, 0, -1):
-            if len(words) >= n:
-                candidate = ' '.join(words[-n:])
-                norm_candidate = candidate.lower().replace(' ', '')
-                if norm_candidate in norm_league_map:
-                    matched_league = norm_league_map[norm_candidate]
-                    print(f"[DEBUG] Suffix match: '{norm_candidate}' -> '{matched_league}'")
-                    found_leagues.append(matched_league)
-                    matched = True
-                    break
-        if matched:
-            continue
-        # 2. Fuzzy match on normalized forms (PATCH: use higher cutoff 0.9)
-        norm_leagues = list(norm_league_map.keys())
-        match = get_close_matches(norm_phrase, norm_leagues, n=1, cutoff=0.9)
-        if match:
-            matched_league = norm_league_map[match[0]];
-            print(f"[DEBUG] Fuzzy normalized match: '{norm_phrase}' -> '{matched_league}'")
-            found_leagues.append(matched_league)
-            continue
-        # 3. Fallback: print similarity for debugging
-        for norm_lg, orig_lg in norm_league_map.items():
-            sim = SequenceMatcher(None, norm_phrase, norm_lg).ratio()
-            print(f"[DEBUG] Similarity between '{norm_phrase}' and '{norm_lg}': {sim}")
-    found_leagues = list(dict.fromkeys(found_leagues))  # Remove duplicates, preserve order
-    if found_leagues:
-        found_leagues = prioritize_leagues(found_leagues)
-        if len(found_leagues) == 1:
-            result["league"] = found_leagues[0]
-        else:
-            result["league"] = found_leagues
-        print(f"[DEBUG] All matched leagues: {found_leagues}")
-    else:
-        # fallback to old logic if nothing found
-        league_keywords = ['in', 'from', 'of', 'league', 'premier', 'bundesliga', 'laliga', 'serie', 'ligue', 'eredivisie', 'championship']
-        for keyword in league_keywords:
-            if keyword in lowered_query:
-                parts = lowered_query.split(keyword)
-                if len(parts) > 1:
-                    potential_league = parts[1].strip()
-                    potential_league = re.sub(r'\b(top|best|players?|by|and|or|the)\b', '', potential_league).strip()
-                    if potential_league:
-                        corrected_league = robust_correction(potential_league, leagues)
-                        found_leagues = fuzzy_find(corrected_league, leagues, threshold=0.6)
-                        print(f"[DEBUG] League extraction: keyword='{keyword}', potential_league='{potential_league}', corrected='{corrected_league}', matches={found_leagues}")
-                        if found_leagues:
-                            break
-        if not found_leagues:
-            corrected_league = robust_correction(query, leagues)
-            found_leagues = fuzzy_find(corrected_league, leagues, threshold=0.6)
-            print(f"[DEBUG] League extraction: fallback to whole query, corrected='{corrected_league}', matches={found_leagues}")
-        if found_leagues:
-            found_leagues = prioritize_leagues(found_leagues)
-            if len(found_leagues) == 1:
-                result["league"] = found_leagues[0]
-            else:
-                result["league"] = found_leagues
-            print(f"[DEBUG] All matched leagues: {found_leagues}")
-        else:
-            result["league"] = None
-    # Stat definition detection
-    define_patterns = [
-        r'define\s+(.+)',
-        r'what\s+is\s+(.+)',
-        r'explain\s+(.+)',
-        r'(.+)\s+definition',
-        r'(.+)\s+meaning',
-        r'how\s+is\s+(.+)\s+calculated',
-        r'what\s+does\s+(.+)\s+mean'
-    ]
-
-    for pattern in define_patterns:
-        match = re.search(pattern, query.lower())
-        if match:
-            result["query_type"] = "STAT_DEFINITION"
-            stat_phrase = match.group(1).strip()
-            
-            # Clean up common words from the stat phrase
-            clean_words = ['statistic', 'stat', 'metric', 'the', 'a', 'an']
-            for word in clean_words:
-                stat_phrase = re.sub(rf'\b{word}\b', '', stat_phrase, flags=re.IGNORECASE).strip()
-            
-            # Try to match to an actual stat column using alias mapping
-            alias_map = get_alias_to_column_map()
-            
-            # Direct match
-            if stat_phrase in alias_map:
-                result["stat"] = alias_map[stat_phrase]
-                break
-            
-            # Normalized match
-            norm_phrase = normalize_colname(stat_phrase)
-            if norm_phrase in alias_map:
-                result["stat"] = alias_map[norm_phrase]
-                break
-            
-            # Fuzzy match
-            all_aliases = list(alias_map.keys())
-            matches = get_close_matches(norm_phrase, all_aliases, n=1, cutoff=0.7)
-            if matches:
-                result["stat"] = alias_map[matches[0]]
-                break
-            
-            # Substring match
-            for alias, col in alias_map.items():
-                if norm_phrase in alias or alias in norm_phrase:
-                    result["stat"] = col
-                    break
-            
-            # If no match found, store the original phrase
-            if "stat" not in result:
-                result["stat"] = stat_phrase
-            
-            break
-
-    # --- Custom league aliases for top 5/7 leagues ---
-    top5_leagues = ["Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1"]
-    top7_leagues = top5_leagues + ["Eredivisie", "Liga Portugal"]
-    if re.search(r"top ?5 leagues?", lowered):
-        result["league"] = top5_leagues
-        result["_league_is_alias"] = True
-        print(f"[DEBUG] Detected 'top 5 leagues' in query, using: {top5_leagues}")
-    elif re.search(r"top ?7 leagues?", lowered):
-        result["league"] = top7_leagues
-        result["_league_is_alias"] = True
-        print(f"[DEBUG] Detected 'top 7 leagues' in query, using: {top7_leagues}")
-
-    # Stat value filter extraction
-    stat_value_filter = extract_stat_value_filter(query)
-    if stat_value_filter:
-        # Use stat aliasing for the stat phrase
-        stat_aliases = get_alias_to_column_map()
-        stat_phrase = stat_value_filter["stat"]
-        # Fuzzy match stat phrase to column
-        all_aliases = list(stat_aliases.keys())
-        match = get_close_matches(stat_phrase, all_aliases, n=1, cutoff=0.6)
-        if match:
-            stat_col = stat_aliases[match[0]]
-            result["stat"] = stat_col
-            result["stat_op"] = stat_value_filter["stat_op"]
-            result["stat_value"] = stat_value_filter["stat_value"]
-        else:
-            # If no match, just use the phrase
-            result["stat"] = stat_phrase
-            result["stat_op"] = stat_value_filter["stat_op"]
-            result["stat_value"] = stat_value_filter["stat_value"]
-    
-    minutes_filter = extract_minutes_filter(query)
-    if minutes_filter:
-        result["minutes_op"] = minutes_filter["minutes_op"]
-        result["minutes_value"] = minutes_filter["minutes_value"]
-        print(f"[DEBUG] Extracted minutes filter: {minutes_filter['minutes_op']} {minutes_filter['minutes_value']}")
+        return None
 
 
-    # LLM fallback for stat/league extraction if missing or ambiguous
-    ambiguous_league = not result.get("league") or (isinstance(result.get("league"), list) and len(result["league"]) > 3)
-    ambiguous_stat = not result.get("stat") or (isinstance(result.get("stat"), list) and len(result["stat"]) > 3)
-    # Do not run LLM fallback if league is set by alias
-    if (ambiguous_league and not result.get("_league_is_alias")) or ambiguous_stat:
-        from football_metrics_assistant.llm_interface import ask_llama
-        llm_prompt = f"Extract the main stat and league(s) from this football query.\nQuery: '{query}'\nRespond in JSON: {{'stat': ..., 'league': ...}}. Only include fields you are confident about."
-        try:
-            llm_response = ask_llama(llm_prompt)
-            import json
-            llm_json = json.loads(llm_response)
-            alias_map = get_alias_to_column_map()
-            # Normalize stat
-            if ambiguous_stat and llm_json.get('stat'):
-                llm_stat = llm_json['stat']
-                # Try direct, substring, and lowercased match
-                stat_col = None
-                if llm_stat in alias_map:
-                    stat_col = alias_map[llm_stat]
-                else:
-                    norm_llm_stat = llm_stat.lower().replace(' ', '')
-                    for alias, col in alias_map.items():
-                        if norm_llm_stat in alias.lower().replace(' ', ''):
-                            stat_col = col
-                            break
-                if stat_col:
-                    result['stat'] = stat_col
-                else:
-                    result['stat'] = llm_stat
-            # Normalize league (only if not set by alias)
-            if ambiguous_league and not result.get("_league_is_alias") and llm_json.get('league'):
-                leagues = get_all_leagues()
-                llm_league = llm_json['league']
-                if isinstance(llm_league, list):
-                    league_matches = [l for l in leagues if l in llm_league or l.lower() in [x.lower() for x in llm_league]]
-                    result['league'] = league_matches if league_matches else llm_league
-                else:
-                    league_match = next((l for l in leagues if l.lower() == llm_league.lower()), None)
-                    result['league'] = league_match if league_match else llm_league
-            print(f"[DEBUG] LLM fallback extraction: {llm_json}")
-        except Exception as e:
-            print(f"[DEBUG] LLM fallback extraction failed: {e}")
-
-    print(f"[DEBUG] Preprocessed query result: {result}")
-    return result 
+# Main function to maintain compatibility
+def preprocess_query(query: str) -> Dict[str, Any]:
+    """
+    Main preprocessing function using the simplified approach.
+    """
+    preprocessor = SimplifiedPreprocessor()
+    return preprocessor.preprocess_query(query)
