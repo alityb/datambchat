@@ -673,6 +673,7 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
     """
     try:
         # Filter players
+        from football_metrics_assistant.tools import filter_players
         df, applied_filters, original_count = filter_players(preprocessed_hints)
         print(f"[DEBUG] After all filters: {len(df)} players")
         
@@ -683,214 +684,132 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                 "original_count": original_count
             }
         
-        query_type = preprocessed_hints.get('query_type', 'TOP_N')
-
-        # --- Formula stat computation ---
-        stat_formula = preprocessed_hints.get('stat_formula')
-        stat = preprocessed_hints.get('stat')
-        computed_stat_col = None
-        league = preprocessed_hints.get('league')
+        query_type = preprocessed_hints.get('query_type', 'FILTER')  # FIXED: Default fallback
         
-        if stat_formula:
-            safe_expr = stat_formula['expr']
-            display_expr = stat_formula.get('display_expr', safe_expr)
-            columns = stat_formula['columns']
-            safe_map = stat_formula.get('safe_map', {})
-            
-            # Check all columns exist
-            missing = [col for col in columns if col not in df.columns]
-            if missing:
-                print(f"[DEBUG] Formula missing columns: {missing}")
-                return {
-                    "error": f"Formula stat missing columns: {missing}",
-                    "applied_filters": applied_filters,
-                    "original_count": original_count
-                }
-            
-            # Compute the formula column
-            try:
-                # Build eval environment
-                local_env = {'safe_map': {}}
-                for safe_var, col in safe_map.items():
-                    local_env['safe_map'][safe_var] = df[col]
-                
-                print(f"[DEBUG] Computing formula: {display_expr}")
-                
-                # Use display_expr as the column name
-                computed_stat_col = display_expr
-                df[computed_stat_col] = eval(safe_expr, {"__builtins__": None}, local_env)
-                
-                # Handle inf/-inf values
-                import numpy as np
-                df[computed_stat_col] = df[computed_stat_col].replace([np.inf, -np.inf], np.nan)
-                
-                # THIS IS CRUCIAL: Use the computed column as the stat to sort by
-                stat = computed_stat_col
-                print(f"[DEBUG] Formula computed successfully, will sort by: '{stat}'")
-                
-            except Exception as e:
-                print(f"[DEBUG] Error computing formula: {e}")
-                return {
-                    "error": f"Error computing formula: {e}",
-                    "applied_filters": applied_filters,
-                    "original_count": original_count
-                }
+        # FIXED: Handle ambiguous queries better
+        if query_type in ["OTHER", None] or not query_type:
+            # Determine intent from available data
+            if preprocessed_hints.get('stat') or preprocessed_hints.get('stat_formula'):
+                query_type = "TOP_N"
+            elif any(key in preprocessed_hints for key in ["position", "league", "team", "age_filter"]):
+                query_type = "FILTER" 
+            else:
+                query_type = "LIST"
         
-        # Handle multi-league case for computed stats
-        if isinstance(league, list) and stat:
-            top_n = preprocessed_hints.get('top_n', 5)
-            
-            try:
-                # Sort entire dataset and get top N
-                top_players_df = sort_and_limit(df, stat, top_n)
-                
-                # Convert to records and add league info
-                all_players = []
-                for _, player in top_players_df.iterrows():
-                    player_dict = player.to_dict()
-                    # Clean up the values
-                    player_dict = {k: to_python_type(v) for k, v in player_dict.items()}
-                    all_players.append(player_dict)
-                
-                # Build summary stats by league for context
-                league_summaries = {}
-                for lg in league:
-                    df_league = df[df['League'] == lg]
-                    if not df_league.empty:
-                        league_summaries[lg] = get_player_summary(df_league, stat)
-                
-                # Build overall summary
-                overall_summary = get_player_summary(df, stat)
-                
-                def clean_json(obj):
-                    if isinstance(obj, dict):
-                        return {k: clean_json(v) for k, v in obj.items()}
-                    elif isinstance(obj, list):
-                        return [clean_json(v) for v in obj]
-                    else:
-                        return to_python_type(obj)
-                
-                return {
-                    "success": True,
-                    "multi_league": True,
-                    "top_players": clean_json(all_players),  # Overall top N
-                    "summary": clean_json(overall_summary),  # Overall stats
-                    "summary_by_league": clean_json(league_summaries),  # League breakdowns for context
-                    "applied_filters": applied_filters,
-                    "count": len(df),
-                    "stat": stat
-                }
-                
-            except Exception as e:
-                print(f"[DEBUG] Error computing overall top players: {e}")
-                return {
-                    "error": f"Error computing top players: {e}",
-                    "applied_filters": applied_filters,
-                    "original_count": original_count
-                }
+        # FIXED: Handle stat value filters properly
+        if preprocessed_hints.get("stat_op") and preprocessed_hints.get("stat_value") is not None:
+            query_type = "FILTER"  # Force to filter type for stat value filters
         
-        # Continue with other query types...
-        if query_type == 'COUNT' or query_type == 'FILTER':
-            # Always include filtered_data for table rendering
-            filtered_data = df[['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']]
+        # Handle different query types...
+        if query_type == 'FILTER':
+            # Show filtered results with the stat if available
+            stat = preprocessed_hints.get('stat')
+            
+            base_columns = ['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']
+            filtered_data = df[base_columns].copy()
+            
             if stat and stat in df.columns:
-                filtered_data = filtered_data.copy()
-                filtered_data[stat] = df[stat].apply(to_python_type)
+                filtered_data[stat] = df[stat]
+                
+                # If there's a stat filter, apply it and show results
+                if preprocessed_hints.get("stat_op") and preprocessed_hints.get("stat_value") is not None:
+                    op = preprocessed_hints["stat_op"]
+                    value = preprocessed_hints["stat_value"]
+                    
+                    # Apply the stat filter
+                    if op == ">=":
+                        stat_filtered_df = df[df[stat] >= value]
+                    elif op == ">":
+                        stat_filtered_df = df[df[stat] > value]
+                    elif op == "<=":
+                        stat_filtered_df = df[df[stat] <= value]
+                    elif op == "<":
+                        stat_filtered_df = df[df[stat] < value]
+                    elif op == "==":
+                        stat_filtered_df = df[df[stat] == value]
+                    else:
+                        stat_filtered_df = df
+                    
+                    if stat_filtered_df.empty:
+                        return {
+                            "error": f"No players found with {stat} {op} {value}",
+                            "applied_filters": applied_filters + [f"{stat} {op} {value}"],
+                            "original_count": original_count
+                        }
+                    
+                    # Return the filtered results
+                    # Return the filtered results - SORTED
+                    result_data = stat_filtered_df[base_columns + [stat]].copy()
+                    result_data = result_data.sort_values(by=stat, ascending=False)  # ADD THIS LINE
+                    return {
+                        "success": True,
+                        "count": len(stat_filtered_df),
+                        "summary": f"Found {len(stat_filtered_df)} players with {stat} {op} {value}",
+                        "filtered_data": result_data.to_dict('records'),
+                        "applied_filters": applied_filters + [f"{stat} {op} {value}"],
+                        "stat": stat
+                    }            
             return {
                 "success": True,
                 "count": len(df),
-                "summary": f"There are {len(df)} players matching your criteria.",
+                "summary": f"Found {len(df)} players matching your criteria",
                 "filtered_data": filtered_data.to_dict('records'),
                 "applied_filters": applied_filters
             }
             
-        elif query_type == 'LIST':
-            return {
-                "success": True,
-                "players": df[['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']].to_dict('records'),
-                "count": len(df),
-                "applied_filters": applied_filters
-            }
-            
-        elif query_type == 'PLAYER_REPORT':
-            player_name = preprocessed_hints.get('player')
-            if not player_name:
-                return {
-                    "error": "No player specified for report",
-                    "applied_filters": applied_filters,
-                    "count": len(df)
-                }
-            
-            return generate_player_report(player_name)
-            
-        elif query_type == 'STAT_DEFINITION':
-            stat_name = preprocessed_hints.get('stat')
-            if not stat_name:
-                return {
-                    "error": "No statistic specified for definition",
-                    "applied_filters": applied_filters,
-                    "count": len(df)
-                }
-            
-            return generate_stat_definition_report(stat_name)
-
-        elif query_type in ('TOP_N', 'FILTER'):
-            # Check if we have a stat to work with
+        elif query_type == 'TOP_N':
+            stat = preprocessed_hints.get('stat')
             if not stat:
                 return {
-                    "error": "No stat specified for analysis. Please specify what metric you want to analyze (e.g., 'goals per 90', 'assists', 'xG').",
-                    "filtered_data": df[['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']].head(10).to_dict('records'),
+                    "error": "No statistic specified for ranking. Please specify what metric you want to rank by (e.g., 'goals per 90', 'assists', 'xG').",
                     "applied_filters": applied_filters,
                     "count": len(df)
                 }
-                
-            # Handle case where stat is a list
-            if isinstance(stat, list):
-                stat = stat[0]  # Take the first stat if multiple
-                
-            print(f"[DEBUG] Stat column: {stat}")
-            print(f"[DEBUG] Stat values: {df[stat].head(10).to_list() if stat in df.columns else 'N/A'}")
             
-            # Get top N
             top_n = preprocessed_hints.get('top_n', 5)
             
-            # Sort by the requested stat
+            # Handle the rest of TOP_N logic...
+            from football_metrics_assistant.tools import sort_and_limit, get_player_summary, to_python_type
+            
             try:
                 top_players_df = sort_and_limit(df, stat, top_n)
+                summary = get_player_summary(df, stat)
+                
+                return {
+                    "success": True,
+                    "top_players": [
+                        {k: to_python_type(v) for k, v in player.items()}
+                        for player in top_players_df.to_dict('records')
+                    ],
+                    "summary": {k: to_python_type(v) for k, v in summary.items()},
+                    "applied_filters": applied_filters,
+                    "original_count": original_count,
+                    "filtered_count": len(df),
+                    "stat": stat,
+                    "top_n": top_n,
+                    "count": len(df)
+                }
             except Exception as e:
                 return {
-                    "error": f"Stat error: {str(e)}",
+                    "error": f"Error ranking by {stat}: {str(e)}",
                     "applied_filters": applied_filters,
                     "count": len(df)
                 }
-            
-            # Generate chart
-            fig, chart_description = generate_chart(df, stat, top_n)
-            
-            # Get summary
-            summary = get_player_summary(df, stat)
-            
-            # Convert all summary values to Python types
-            summary = {k: to_python_type(v) for k, v in summary.items()}
-            
+        
+        # Handle other query types (LIST, COUNT, etc.)
+        elif query_type in ['LIST', 'COUNT']:
+            base_columns = ['Player', 'Team within selected timeframe', 'Position', 'Age', 'League']
             return {
                 "success": True,
-                "top_players": [
-                    {k: to_python_type(v) for k, v in player.items()}
-                    for player in top_players_df.to_dict('records')
-                ],
-                "summary": summary,
-                "chart_description": chart_description,
+                "players": df[base_columns].to_dict('records'),
+                "count": len(df),
                 "applied_filters": applied_filters,
-                "original_count": original_count,
-                "filtered_count": len(df),
-                "stat": stat,
-                "top_n": top_n,
-                "count": len(df)
+                "summary": f"Found {len(df)} players matching your criteria"
             }
+        
         else:
             return {
-                "error": "Sorry, I couldn't understand the type of question. Please rephrase.",
+                "error": f"Query type '{query_type}' not fully supported yet. Please try rephrasing your question.",
                 "applied_filters": applied_filters,
                 "count": len(df)
             }
