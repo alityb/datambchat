@@ -80,8 +80,9 @@ class SimplifiedPreprocessor:
             'rw': 'Winger',
             'goalkeeper': 'Goalkeeper',
             'goalkeepers': 'Goalkeeper',
-            'gk': 'Goalkeeper',
-            'keeper': 'Goalkeeper'
+            'keeper': 'Goalkeeper',
+            'keepers': 'Goalkeeper',  # FIXED: Added missing 'keepers'
+            'gk': 'Goalkeeper'
         }
 
     def preprocess_query(self, query: str) -> Dict[str, Any]:
@@ -91,8 +92,13 @@ class SimplifiedPreprocessor:
         result = {"original": query}
         lowered = query.lower().strip()
         
-        # Step 1: Query type classification (LLM-based)
-        query_type = classify_query_type(query).strip().replace(':', '').upper()
+        # Step 1: Query type classification (LLM-based) with error handling
+        try:
+            query_type = classify_query_type(query).strip().replace(':', '').upper()
+        except Exception as e:
+            print(f"[DEBUG] LLM classification failed: {e}, using fallback")
+            query_type = self._fallback_query_classification(lowered)
+        
         result["query_type"] = query_type
         
         # Step 2: Extract basic numeric filters
