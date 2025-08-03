@@ -1,5 +1,6 @@
 import re
-from typing import Dict, Any, List, Optional
+import unicodedata
+from typing import Dict, Any, List, Optional, Tuple
 from football_metrics_assistant.data_utils import (
     get_all_teams, get_all_players, get_all_positions, get_all_leagues,
     get_alias_to_column_map, normalize_colname
@@ -12,6 +13,7 @@ class SimplifiedPreprocessor:
     """
     Simplified preprocessor that handles core cases correctly.
     Uses clear, debuggable extraction with minimal interdependencies.
+    Now includes improved player name matching.
     """
     
     def __init__(self):
@@ -81,9 +83,184 @@ class SimplifiedPreprocessor:
             'goalkeeper': 'Goalkeeper',
             'goalkeepers': 'Goalkeeper',
             'keeper': 'Goalkeeper',
-            'keepers': 'Goalkeeper',  # FIXED: Added missing 'keepers'
+            'keepers': 'Goalkeeper',
             'gk': 'Goalkeeper'
         }
+
+    # ============ IMPROVED PLAYER MATCHING METHODS ============
+    
+    def _normalize_name(self, name: str) -> str:
+        """
+        Normalize a name by:
+        1. Converting to lowercase
+        2. Removing accents/diacritics
+        3. Removing extra spaces
+        4. Removing dots and common punctuation
+        """
+        if not name:
+            return ""
+        
+        # Convert to lowercase
+        name = name.lower().strip()
+        
+        # Remove accents and diacritics
+        name = unicodedata.normalize('NFKD', name)
+        name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
+        
+        # Remove dots, hyphens, and common punctuation (but keep spaces)
+        name = re.sub(r'[.\-_\'"]', '', name)
+        
+        # Normalize multiple spaces to single spaces
+        name = re.sub(r'\s+', ' ', name).strip()
+        
+        return name
+
+    def _extract_name_variations(self, full_name: str) -> List[str]:
+        """
+        Extract common variations of a player name.
+        For example: "Mohamed Salah" -> ["mohamed", "salah", "mohamed salah", "m salah"]
+        """
+        if not full_name:
+            return []
+        
+        normalized = self._normalize_name(full_name)
+        parts = normalized.split()
+        
+        if not parts:
+            return [normalized]
+        
+        variations = [normalized]  # Full normalized name
+        
+        # Add individual parts (first name, last name)
+        for part in parts:
+            if len(part) > 1:  # Skip single letters unless they're the only part
+                variations.append(part)
+        
+        # Add first name + last name combinations
+        if len(parts) >= 2:
+            # First + Last
+            variations.append(f"{parts[0]} {parts[-1]}")
+            
+            # First initial + Last name (e.g., "m salah")
+            if len(parts[0]) > 0:
+                variations.append(f"{parts[0][0]} {parts[-1]}")
+            
+            # Last name only (most common search)
+            variations.append(parts[-1])
+        
+        # Add middle name combinations if present
+        if len(parts) >= 3:
+            # First + Middle + Last
+            variations.append(f"{parts[0]} {parts[1]} {parts[-1]}")
+            
+            # First + Middle initial + Last
+            if len(parts[1]) > 0:
+                variations.append(f"{parts[0]} {parts[1][0]} {parts[-1]}")
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_variations = []
+        for var in variations:
+            if var and var not in seen:
+                seen.add(var)
+                unique_variations.append(var)
+        
+        return unique_variations
+
+    def _calculate_name_similarity(self, query_name: str, player_name: str) -> float:
+        """
+        Calculate similarity score between query and player name.
+        Returns a score between 0 and 1, where 1 is perfect match.
+        """
+        query_norm = self._normalize_name(query_name)
+        player_norm = self._normalize_name(player_name)
+        
+        if not query_norm or not player_norm:
+            return 0.0
+        
+        # Exact match gets highest score
+        if query_norm == player_norm:
+            return 1.0
+        
+        # Check if query is contained in player name or vice versa
+        if query_norm in player_norm:
+            return 0.9 * (len(query_norm) / len(player_norm))
+        
+        if player_norm in query_norm:
+            return 0.9 * (len(player_norm) / len(query_norm))
+        
+        # Check variations
+        query_variations = self._extract_name_variations(query_name)
+        player_variations = self._extract_name_variations(player_name)
+        
+        best_score = 0.0
+        for q_var in query_variations:
+            for p_var in player_variations:
+                if q_var == p_var:
+                    # Weight by length of match
+                    score = 0.8 * (len(q_var) / max(len(query_norm), len(player_norm)))
+                    best_score = max(best_score, score)
+        
+        # Fuzzy string matching as fallback
+        fuzzy_matches = get_close_matches(query_norm, [player_norm], n=1, cutoff=0.6)
+        if fuzzy_matches:
+            fuzzy_score = 0.7  # Lower than exact matches
+            best_score = max(best_score, fuzzy_score)
+        
+        return best_score
+
+    def _find_player_name(self, query_name: str) -> str:
+        """
+        Find player name using improved matching algorithm.
+        """
+        from football_metrics_assistant.data_utils import load_data
+        
+        query_name = query_name.strip()
+        print(f"[DEBUG] Searching for player: '{query_name}'")
+        
+        # Load actual player data
+        df = load_data()
+        if df.empty or 'Player' not in df.columns:
+            print("[DEBUG] No player data available")
+            return query_name  # Return original if no data
+        
+        actual_players = df['Player'].unique().tolist()
+        print(f"[DEBUG] Total players in database: {len(actual_players)}")
+        
+        best_match = None
+        best_score = 0.0
+        min_score = 0.5  # Minimum confidence threshold
+        
+        # Calculate similarity scores for all players
+        for player in actual_players:
+            score = self._calculate_name_similarity(query_name, player)
+            if score > best_score:
+                best_score = score
+                best_match = player
+        
+        # Only return match if it meets minimum threshold
+        if best_score >= min_score:
+            print(f"[DEBUG] Best match: '{best_match}' (confidence: {best_score:.3f})")
+            return best_match
+        else:
+            print(f"[DEBUG] No confident match found. Best was: '{best_match}' (confidence: {best_score:.3f})")
+            
+            # Show some suggestions for debugging
+            suggestions = []
+            for player in actual_players:
+                score = self._calculate_name_similarity(query_name, player)
+                if score > 0.3:  # Lower threshold for suggestions
+                    suggestions.append((player, score))
+            
+            suggestions.sort(key=lambda x: x[1], reverse=True)
+            if suggestions:
+                print(f"[DEBUG] Possible suggestions:")
+                for player, score in suggestions[:5]:
+                    print(f"  - {player} (confidence: {score:.3f})")
+            
+            return query_name  # Return original if no good match found
+
+    # ============ REST OF THE EXISTING METHODS (unchanged) ============
 
     def preprocess_query(self, query: str) -> Dict[str, Any]:
         """
