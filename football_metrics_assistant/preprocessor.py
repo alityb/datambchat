@@ -633,8 +633,19 @@ class SimplifiedPreprocessor:
         if result.get("query_type") == "TOP_N" and "top_n" not in result:
             result["top_n"] = 5
         
-        # Ensure we have a stat for stat-based queries
+        # FIXED: Better fallback for ambiguous queries
         query_type = result.get("query_type")
+        if query_type in ["OTHER", None]:
+            # If we have filters but no clear intent, default to FILTER
+            if any(key in result for key in ["position", "league", "team", "age_filter", "minutes_op", "stat_op"]):
+                result["query_type"] = "FILTER"
+            # If we have a stat, default to TOP_N
+            elif result.get("stat"):
+                result["query_type"] = "TOP_N"
+            else:
+                result["query_type"] = "LIST"
+        
+        # Ensure we have a stat for stat-based queries
         if query_type in ["TOP_N", "FILTER"] and not result.get("stat") and not result.get("stat_formula"):
             # Try one more time with a simpler approach
             simple_stat = self._extract_simple_stat_fallback(result["original"])
