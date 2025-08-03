@@ -98,7 +98,7 @@ def format_stat_definition_response(definition_data: dict) -> dict:
     }
 
 def generate_summary(data_analysis, preprocessed, filtered_data, stat_col):
-    """Generate a proper summary without None values."""
+    """Generate a proper summary without duplicate stat mentions."""
     
     if not data_analysis or not data_analysis.get('success'):
         return "No players found matching your criteria."
@@ -106,8 +106,10 @@ def generate_summary(data_analysis, preprocessed, filtered_data, stat_col):
     count = data_analysis.get('count', 0)
     applied_filters = data_analysis.get('applied_filters', [])
     
-    # Extract meaningful filter info from applied_filters
+    # FIXED: Clean up duplicate stat filters in description
     filter_descriptions = []
+    stat_filter_added = False
+    
     for f in applied_filters:
         if f.startswith("Position:"):
             pos = f.replace("Position: ", "")
@@ -115,13 +117,19 @@ def generate_summary(data_analysis, preprocessed, filtered_data, stat_col):
         elif f.startswith("League:"):
             league = f.replace("League: ", "")
             filter_descriptions.append(f"in {league}")
-        elif "per 90 >=" in f:
-            # Extract the stat filter info
+        elif "per 90 >=" in f and not stat_filter_added:
+            # Only add the first stat filter to avoid duplication
             parts = f.split(" >= ")
             if len(parts) == 2:
                 stat_name = parts[0]
                 value = parts[1]
                 filter_descriptions.append(f"with at least {value} {stat_name.lower()}")
+                stat_filter_added = True
+        elif f.startswith("Minutes played") and ">=" in f:
+            parts = f.split(" >= ")
+            if len(parts) == 2:
+                value = parts[1]
+                filter_descriptions.append(f"with {value}+ minutes")
     
     base_desc = " ".join(filter_descriptions) if filter_descriptions else ""
     
