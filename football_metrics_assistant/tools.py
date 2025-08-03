@@ -225,6 +225,68 @@ def generate_chart(df: pd.DataFrame, stat: str, top_n: int = 5, chart_type: str 
     
     return fig, description
 
+def evaluate_stat_formula(df: pd.DataFrame, formula_data: Dict[str, Any]) -> pd.DataFrame:
+    """
+    Evaluate a stat formula and add the computed column to the dataframe.
+    """
+    try:
+        safe_map = formula_data['safe_map']
+        expr = formula_data['expr']
+        display_expr = formula_data['display_expr']
+        
+        print(f"[DEBUG] Evaluating formula: {display_expr}")
+        print(f"[DEBUG] Safe expression: {expr}")
+        print(f"[DEBUG] Safe map: {safe_map}")
+        
+        # Check if all required columns exist
+        missing_cols = []
+        for safe_var, col_name in safe_map.items():
+            if col_name not in df.columns:
+                missing_cols.append(col_name)
+        
+        if missing_cols:
+            raise ValueError(f"Missing columns for formula: {missing_cols}")
+        
+        # Create a copy of the dataframe to avoid modifying the original
+        df_copy = df.copy()
+        
+        # Evaluate the expression safely
+        # We need to replace the safe_map references with actual column values
+        evaluated_expr = expr
+        for safe_var, col_name in safe_map.items():
+            # Replace safe_map["var"] with df_copy["actual_column"]
+            evaluated_expr = evaluated_expr.replace(f'safe_map["{safe_var}"]', f'df_copy["{col_name}"]')
+        
+        print(f"[DEBUG] Final expression: {evaluated_expr}")
+        
+        # Evaluate the formula
+        df_copy[display_expr] = eval(evaluated_expr)
+        
+        # Handle division by zero and infinite values
+        df_copy[display_expr] = df_copy[display_expr].replace([float('inf'), float('-inf')], float('nan'))
+        
+        # Remove rows where the formula result is NaN
+        initial_count = len(df_copy)
+        df_copy = df_copy.dropna(subset=[display_expr])
+        final_count = len(df_copy)
+        
+        if final_count < initial_count:
+            print(f"[DEBUG] Removed {initial_count - final_count} rows with invalid formula results")
+        
+        print(f"[DEBUG] Formula computed successfully. Sample values:")
+        if not df_copy.empty:
+            sample_values = df_copy[display_expr].head(5)
+            for i, val in enumerate(sample_values):
+                player_name = df_copy.iloc[i]['Player'] if 'Player' in df_copy.columns else f"Player {i}"
+                print(f"  {player_name}: {val:.3f}")
+        
+        return df_copy
+        
+    except Exception as e:
+        print(f"[DEBUG] Formula evaluation failed: {e}")
+        raise ValueError(f"Failed to evaluate formula '{formula_data.get('display_expr', 'unknown')}': {str(e)}")
+
+
 def get_stat_definition_text(stat_name: str) -> str:
     """
     Get a simple explanation of what a stat means.
@@ -668,12 +730,30 @@ def analyze_query(preprocessed_hints: Dict[str, Any]) -> Dict[str, Any]:
                 "original_count": original_count
             }
         
-        query_type = preprocessed_hints.get('query_type', 'FILTER')  # FIXED: Default fallback
+        # ADD THIS SECTION - Handle stat formulas
+        stat = preprocessed_hints.get('stat')
+        stat_formula = preprocessed_hints.get('stat_formula')
         
+        if stat_formula:
+            print(f"[DEBUG] Processing stat formula: {stat_formula}")
+            try:
+                df = evaluate_stat_formula(df, stat_formula)
+                stat = stat_formula['display_expr']  # Use the display expression as the stat name
+                print(f"[DEBUG] Formula evaluation successful. Using stat: {stat}")
+            except Exception as e:
+                return {
+                    "error": f"Formula evaluation failed: {str(e)}",
+                    "applied_filters": applied_filters,
+                    "original_count": original_count
+                }
+        
+        query_type = preprocessed_hints.get('query_type', 'FILTER')
+        
+        # Rest of the function continues as before...
         # FIXED: Handle ambiguous queries better
         if query_type in ["OTHER", None] or not query_type:
             # Determine intent from available data
-            if preprocessed_hints.get('stat') or preprocessed_hints.get('stat_formula'):
+            if stat or stat_formula:
                 query_type = "TOP_N"
             elif any(key in preprocessed_hints for key in ["position", "league", "team", "age_filter"]):
                 query_type = "FILTER" 
