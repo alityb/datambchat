@@ -293,7 +293,7 @@ class SimplifiedPreprocessor:
             self._extract_positions(lowered, result)
             self._extract_teams(lowered, result)
             
-            # FIXED: Handle stat value filters BEFORE general stat extraction
+            # Handle stat value filters BEFORE general stat extraction
             self._extract_stat_value_filters(lowered, result)
             
             # Only extract general stats if no specific stat was found
@@ -375,15 +375,36 @@ class SimplifiedPreprocessor:
                 break
 
     def _extract_player_reports(self, lowered: str, result: Dict[str, Any]) -> None:
-        """Extract player report requests."""
-        report_match = re.search(r'(\w+(?:\s+\w+)*)\s+report\b', lowered)
+        """Extract player report requests with improved pattern matching."""
+        
+        # Pattern 1: "player_name report"
+        report_match = re.search(r'(.+?)\s+report\b', lowered)
         if report_match:
             result["query_type"] = "PLAYER_REPORT"
             player_name = report_match.group(1).strip()
-            
-            # Simple player name matching
             matched_player = self._find_player_name(player_name)
             result["player"] = matched_player
+            return
+        
+        # Pattern 2: "report on player_name" or "report for player_name"
+        report_match2 = re.search(r'report\s+(?:on|for)\s+(.+)', lowered)
+        if report_match2:
+            result["query_type"] = "PLAYER_REPORT"
+            player_name = report_match2.group(1).strip()
+            matched_player = self._find_player_name(player_name)
+            result["player"] = matched_player
+            return
+        
+        # Pattern 3: Just a player name (if it's a short query and clearly a name)
+        words = lowered.split()
+        if len(words) <= 2 and len(' '.join(words)) > 3:  # Allow up to 2 words for names like "e can"
+            # Try to match as a player name
+            matched_player = self._find_player_name(' '.join(words))
+            # Only assume it's a player report if we found a confident match
+            if matched_player != ' '.join(words):  # If _find_player_name returned something different, it found a match
+                result["query_type"] = "PLAYER_REPORT"
+                result["player"] = matched_player
+                return
 
     def _extract_stat_definitions(self, lowered: str, result: Dict[str, Any]) -> None:
         """Extract stat definition requests."""
@@ -478,11 +499,11 @@ class SimplifiedPreprocessor:
 
     def _extract_stat_value_filters(self, lowered: str, result: Dict[str, Any]) -> None:
         """
-        FIXED: Extract stat value filters with precise pattern matching.
+        Extract stat value filters with precise pattern matching.
         """
         print(f"[DEBUG] Extracting stat value filters from: '{lowered}'")
         
-        # FIXED: Use word boundaries and non-greedy matching to avoid capturing "and 1000"
+        # Use word boundaries and non-greedy matching to avoid capturing "and 1000"
         patterns = [
             (r"at least ([\d.]+) (\w+)(?:\s+per\s+\w+)?(?=\s|$)", ">="),          # "at least 0.5 goals"
             (r"atleast ([\d.]+) (\w+)(?:\s+per\s+\w+)?(?=\s|$)", ">="),           # "atleast 0.5 goals"
