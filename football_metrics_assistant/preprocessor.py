@@ -299,15 +299,62 @@ class SimplifiedPreprocessor:
                         result["team"] = team
                         break
 
+    def _extract_stat_value_filters(self, lowered: str, result: Dict[str, Any]) -> None:
+        """
+        FIXED: Extract stat value filters with precise pattern matching.
+        """
+        print(f"[DEBUG] Extracting stat value filters from: '{lowered}'")
+        
+        # FIXED: Use word boundaries and non-greedy matching to avoid capturing "and 1000"
+        patterns = [
+            (r"at least ([\d.]+) (\w+)(?:\s+per\s+\w+)?(?=\s|$)", ">="),          # "at least 0.5 goals"
+            (r"atleast ([\d.]+) (\w+)(?:\s+per\s+\w+)?(?=\s|$)", ">="),           # "atleast 0.5 goals"
+            (r"more than ([\d.]+) (\w+)(?:\s+per\s+\w+)?(?=\s|$)", ">"),          # "more than 0.5 goals"
+            (r"over ([\d.]+) (\w+)(?:\s+per\s+\w+)?(?=\s|$)", ">"),               # "over 0.5 goals"
+            (r"under ([\d.]+) (\w+)(?:\s+per\s+\w+)?(?=\s|$)", "<"),              # "under 0.5 goals"
+            (r"less than ([\d.]+) (\w+)(?:\s+per\s+\w+)?(?=\s|$)", "<"),          # "less than 0.5 goals"
+            (r"exactly ([\d.]+) (\w+)(?:\s+per\s+\w+)?(?=\s|$)", "=="),           # "exactly 0.5 goals"
+            (r"with ([\d.]+)\+ (\w+)(?:\s+per\s+\w+)?(?=\s|$)", ">="),            # "with 0.5+ goals"
+        ]
+        
+        for pattern, op in patterns:
+            match = re.search(pattern, lowered)
+            if match:
+                value = float(match.group(1))
+                stat_word = match.group(2).strip()
+                
+                print(f"[DEBUG] Found stat filter: '{stat_word}' {op} {value}")
+                
+                # Try to map the stat word to actual column
+                # First try the word alone
+                mapped_stat = self._map_stat_phrase(stat_word)
+                
+                # If that fails, try with "per 90" suffix for common stats
+                if not mapped_stat and stat_word in ['goals', 'assists', 'passes', 'tackles', 'saves']:
+                    mapped_stat = self._map_stat_phrase(f"{stat_word} per 90")
+                
+                if mapped_stat:
+                    result["stat"] = mapped_stat
+                    result["stat_op"] = op
+                    result["stat_value"] = value
+                    result["query_type"] = "FILTER"
+                    print(f"[DEBUG] Successfully mapped: {mapped_stat} {op} {value}")
+                    return
+                else:
+                    print(f"[DEBUG] Could not map stat: '{stat_word}'")
+    
+    print(f"[DEBUG] No stat value filters found")
     def _extract_stats_and_formulas(self, lowered: str, result: Dict[str, Any]) -> None:
         """Extract stats and handle formula detection."""
         # Check for math operators first (formula detection)
         if any(op in lowered for op in ['+', '-', '/', '*']) and not any(word in lowered for word in ['report', 'define', 'what is']):
-            formula_result = self._extract_stat_formula(lowered)
-            if formula_result:
-                result["stat_formula"] = formula_result
-                result["stat"] = formula_result['expr']
-                return
+            # FIXED: Don't treat "1000+ minutes" as a formula
+            if not re.search(r'\d+\+\s*minutes', lowered):
+                formula_result = self._extract_stat_formula(lowered)
+                if formula_result:
+                    result["stat_formula"] = formula_result
+                    result["stat"] = formula_result['expr']
+                    return
         
         # Extract regular stats
         stat = self._extract_single_stat(lowered)
