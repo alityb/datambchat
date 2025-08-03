@@ -121,15 +121,17 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
         if 'Position' in df.columns:
             df = df[df['Position'] == 'Goalkeeper']
             applied_filters.append('Position: Goalkeeper (auto for goalkeeper stat)')
-            print(f"[DEBUG] After auto-goalkeeper filter: {len(df)} players, shape: {df.shape}")
-            if df.empty:
-                print("[DEBUG] DataFrame is EMPTY after auto-goalkeeper filter!")
+            print(f"[DEBUG] After auto-goalkeeper filter: {len(df)} players")
 
-    # Stat value filter (e.g., Goals per 90 >= 0.5)
-    if preprocessed_hints.get('stat') and preprocessed_hints.get('stat_value') is not None:
+    # FIXED: Stat value filter - only apply once and track it properly
+    if (preprocessed_hints.get('stat') and 
+        preprocessed_hints.get('stat_value') is not None and 
+        not any('per 90 >=' in f for f in applied_filters)):  # Avoid duplicate
+        
         stat = preprocessed_hints['stat']
         op = preprocessed_hints.get('stat_op', '>=')
         value = preprocessed_hints['stat_value']
+        
         if stat in df.columns:
             if op == '>=':
                 df = df[df[stat] >= value]
