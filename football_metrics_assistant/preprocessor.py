@@ -115,13 +115,33 @@ class SimplifiedPreprocessor:
             self._extract_leagues(lowered, result)
             self._extract_positions(lowered, result)
             self._extract_teams(lowered, result)
-            self._extract_stats_and_formulas(lowered, result)
+            
+            # FIXED: Handle stat value filters BEFORE general stat extraction
             self._extract_stat_value_filters(lowered, result)
+            
+            # Only extract general stats if no specific stat was found
+            if not result.get('stat'):
+                self._extract_stats_and_formulas(lowered, result)
         
         # Step 5: Post-processing and validation
         self._validate_and_cleanup(result)
         
         return result
+
+    def _fallback_query_classification(self, lowered: str) -> str:
+        """Fallback query classification when LLM fails."""
+        if any(word in lowered for word in ['report', 'profile', 'analysis of']):
+            return "PLAYER_REPORT"
+        elif any(word in lowered for word in ['define', 'what is', 'explain', 'meaning']):
+            return "STAT_DEFINITION"
+        elif any(word in lowered for word in ['top', 'best', 'highest']):
+            return "TOP_N"
+        elif any(word in lowered for word in ['how many', 'count', 'number of']):
+            return "COUNT"
+        elif any(word in lowered for word in ['list', 'show me', 'who are']):
+            return "LIST"
+        else:
+            return "FILTER"
 
     def _extract_top_n(self, lowered: str, result: Dict[str, Any]) -> None:
         """Extract top N with clear patterns."""
