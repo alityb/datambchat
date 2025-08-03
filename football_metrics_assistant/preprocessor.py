@@ -540,13 +540,19 @@ class SimplifiedPreprocessor:
                     return
                 else:
                     print(f"[DEBUG] Could not map stat: '{stat_word}'")
-    
-    print(f"[DEBUG] No stat value filters found")
+        
+        print(f"[DEBUG] No stat value filters found")
+
     def _extract_stats_and_formulas(self, lowered: str, result: Dict[str, Any]) -> None:
         """Extract stats and handle formula detection."""
+        # Skip if we already have a stat from stat value filter
+        if result.get("stat"):
+            print(f"[DEBUG] Stat already extracted: {result.get('stat')}, skipping general stat extraction")
+            return
+        
         # Check for math operators first (formula detection)
         if any(op in lowered for op in ['+', '-', '/', '*']) and not any(word in lowered for word in ['report', 'define', 'what is']):
-            # FIXED: Don't treat "1000+ minutes" as a formula
+            # Don't treat "1000+ minutes" as a formula
             if not re.search(r'\d+\+\s*minutes', lowered):
                 formula_result = self._extract_stat_formula(lowered)
                 if formula_result:
@@ -554,7 +560,7 @@ class SimplifiedPreprocessor:
                     result["stat"] = formula_result['expr']
                     return
         
-        # Extract regular stats
+        # Extract regular stats only if no stat found yet
         stat = self._extract_single_stat(lowered)
         if stat:
             result["stat"] = stat
@@ -566,7 +572,7 @@ class SimplifiedPreprocessor:
         # Handle "with" filter clauses - we want the stat before "with"
         main_part = lowered
         
-        # FIXED: Better handling of "with" clauses - only split if it's a filter
+        # Better handling of "with" clauses - only split if it's a filter
         if ' with ' in lowered:
             parts = lowered.split(' with ')
             if len(parts) > 1:
@@ -768,7 +774,7 @@ class SimplifiedPreprocessor:
         if norm_phrase in self.alias_map:
             return self.alias_map[norm_phrase]
         
-        # FIXED: More consistent fuzzy matching
+        # More consistent fuzzy matching
         # First try high confidence fuzzy match on original phrase
         matches = get_close_matches(phrase, list(self.alias_map.keys()), n=1, cutoff=0.85)
         if matches:
@@ -780,39 +786,6 @@ class SimplifiedPreprocessor:
             return self.alias_map[matches[0]]
         
         return None
-
-    def _find_player_name(self, query_name: str) -> str:
-        """Find player name with simple matching."""
-        query_name = query_name.strip().lower()
-        
-        # Exact match
-        for player in self.players:
-            if player.lower() == query_name:
-                return player
-        
-        # Famous player mappings
-        famous_players = {
-            'haaland': 'E. Haaland',
-            'messi': 'L. Messi',
-            'ronaldo': 'Cristiano Ronaldo',
-            'mbappe': 'K. Mbappé',
-            'kane': 'Harry Kane',
-            'salah': 'Mohamed Salah'
-        }
-        
-        if query_name in famous_players:
-            mapped_name = famous_players[query_name]
-            if mapped_name in self.players:
-                return mapped_name
-        
-        # High-confidence fuzzy match
-        matches = get_close_matches(query_name, [p.lower() for p in self.players], n=1, cutoff=0.9)
-        if matches:
-            for player in self.players:
-                if player.lower() == matches[0]:
-                    return player
-        
-        return query_name  # Return original if no match
 
     def _make_safe_var(self, col_name: str) -> str:
         """Convert column name to safe variable name."""
@@ -831,7 +804,7 @@ class SimplifiedPreprocessor:
         if result.get("query_type") == "TOP_N" and "top_n" not in result:
             result["top_n"] = 5
         
-        # FIXED: Better fallback for ambiguous queries
+        # Better fallback for ambiguous queries
         query_type = result.get("query_type")
         if query_type in ["OTHER", None]:
             # If we have filters but no clear intent, default to FILTER
