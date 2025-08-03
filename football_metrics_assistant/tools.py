@@ -36,35 +36,27 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
         df = df[df['Team within selected timeframe'] == team]
         applied_filters.append(f"Team: {team}")
         print(f"[DEBUG] After team filter: {len(df)} players, shape: {df.shape}")
-        if df.empty:
-            print("[DEBUG] DataFrame is EMPTY after team filter!")
 
     if preprocessed_hints.get('position'):
         position = preprocessed_hints['position']
         print(f"[DEBUG] Position filter value: {position}")
-        print(f"[DEBUG] Unique positions before filter: {df['Position'].unique()}")
         if isinstance(position, list):
             df = df[df['Position'].isin(position)]
+            applied_filters.append(f"Position: {', '.join(position)}")
         else:
             df = df[df['Position'] == position]
-        print(f"[DEBUG] Unique positions after filter: {df['Position'].unique()}")
-        applied_filters.append(f"Position: {position}")
-        print(f"[DEBUG] After position filter: {len(df)} players, shape: {df.shape}")
-        if df.empty:
-            print("[DEBUG] DataFrame is EMPTY after position filter!")
+            applied_filters.append(f"Position: {position}")
+        print(f"[DEBUG] After position filter: {len(df)} players")
 
     if preprocessed_hints.get('league'):
         league = preprocessed_hints['league']
         if isinstance(league, list):
             df = df[df['League'].isin(league)]
-            applied_filters.append(f"Leagues: {league}")
-            print(f"[DEBUG] After multi-league filter: {len(df)} players, shape: {df.shape}, leagues: {league}")
+            applied_filters.append(f"Leagues: {', '.join(league)}")
         else:
             df = df[df['League'] == league]
             applied_filters.append(f"League: {league}")
-            print(f"[DEBUG] After league filter: {len(df)} players, shape: {df.shape}")
-            if df.empty:
-                print("[DEBUG] DataFrame is EMPTY after league filter!")
+        print(f"[DEBUG] After league filter: {len(df)} players")
 
     if preprocessed_hints.get('age_filter'):
         age_filter = preprocessed_hints['age_filter']
