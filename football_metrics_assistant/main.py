@@ -73,7 +73,7 @@ def format_stat_definition_response(definition_data: dict) -> dict:
         for i, player in enumerate(top_players[:3], 1):
             summary_parts.append(f"{i}. {player['name']} ({player['team']}) - {player['stat_value']:.2f}")
         summary_parts.append("")
-    
+        
     # Build detailed table
     table_rows = ["| Rank | Player | Team | League | Position | Age | Minutes | Value |"]
     table_rows.append("|------|--------|------|--------|----------|-----|---------|-------|")
@@ -96,6 +96,53 @@ def format_stat_definition_response(definition_data: dict) -> dict:
         "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
         "data_analysis": definition_data
     }
+
+def generate_summary(data_analysis, preprocessed, filtered_data, stat_col):
+    """Generate a proper summary without None values."""
+    
+    if not data_analysis or not data_analysis.get('success'):
+        return "No players found matching your criteria."
+    
+    count = data_analysis.get('count', 0)
+    applied_filters = data_analysis.get('applied_filters', [])
+    
+    # Extract meaningful filter info from applied_filters
+    filter_descriptions = []
+    for f in applied_filters:
+        if f.startswith("Position:"):
+            pos = f.replace("Position: ", "")
+            filter_descriptions.append(pos.lower() + "s")
+        elif f.startswith("League:"):
+            league = f.replace("League: ", "")
+            filter_descriptions.append(f"in {league}")
+        elif "per 90 >=" in f:
+            # Extract the stat filter info
+            parts = f.split(" >= ")
+            if len(parts) == 2:
+                stat_name = parts[0]
+                value = parts[1]
+                filter_descriptions.append(f"with at least {value} {stat_name.lower()}")
+    
+    base_desc = " ".join(filter_descriptions) if filter_descriptions else ""
+    
+    # Get top performer if available
+    if filtered_data and stat_col:
+        try:
+            top_player = filtered_data[0]  # First in list (highest value)
+            player_name = top_player['Player']
+            team = top_player['Team within selected timeframe']
+            stat_value = top_player.get(stat_col, 'N/A')
+            
+            if base_desc:
+                summary = f"Found {count} {base_desc}. Top: {player_name} ({team}) with {stat_value}."
+            else:
+                summary = f"Top {stat_col}: {player_name} ({team}) with {stat_value}."
+        except Exception as e:
+            summary = f"Found {count} players {base_desc}." if base_desc else f"Found {count} players."
+    else:
+        summary = f"Found {count} players {base_desc}." if base_desc else f"Found {count} players."
+    
+    return summary
 
 def format_player_report_response(report_data: dict) -> dict:
     """Format player report data for the frontend."""
@@ -390,8 +437,11 @@ def chat(req: ChatRequest):
                 "data_analysis": clean_dict_for_json(data_analysis)
             }
         
-        # Determine the correct stat column name for table and summary
+        # Initialize variables for the main processing
         stat_col = None
+        filtered_data = []
+        
+        # Determine the correct stat column name for table and summary
         if 'stat_formula' in preprocessed:
             # Use display_expr if present
             stat_col = preprocessed['stat_formula'].get('display_expr')
@@ -423,32 +473,7 @@ def chat(req: ChatRequest):
             table += f"\nData based on {data_analysis.get('count', 0)} players matching your criteria."
         
         # Unified summary logic
-        if stat_col and filtered_data:
-            # Sort by stat_col descending and get the top player
-            try:
-                top_player = max(filtered_data, key=lambda p: p.get(stat_col, float('-inf')) if isinstance(p.get(stat_col), (int, float)) else float('-inf'))
-                player_name = top_player['Player']
-                team = top_player['Team within selected timeframe']
-                stat_value = top_player.get(stat_col, 'N/A')
-                league = preprocessed.get('league', '')
-                league_str = f" in {league}" if league else ""
-                summary = f"{player_name} ({team}) had the highest {stat_col}{league_str} with {stat_value}."
-            except Exception as e:
-                summary = f"Top player summary unavailable due to error: {e}"
-        elif filtered_data:
-            league = preprocessed.get('league', '')
-            value = preprocessed.get('stat_value')
-            op = preprocessed.get('stat_op')
-            op_str = {
-                '>=': 'at least',
-                '>': 'more than',
-                '<=': 'at most',
-                '<': 'less than',
-                '==': 'exactly'
-            }.get(op, op)
-            summary = f"There are {data_analysis['count']} players in {league} with {op_str} {value} {stat_col}."
-        else:
-            summary = "No players found matching your criteria."
+        summary = generate_summary(data_analysis, preprocessed, filtered_data, stat_col)
         
         return {
             "summary": summary,
