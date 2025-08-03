@@ -69,9 +69,7 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
         elif op == '==':
             df = df[df['Age'] == value]
         applied_filters.append(f"Age {op} {value}")
-        print(f"[DEBUG] After age filter: {len(df)} players, shape: {df.shape}")
-        if df.empty:
-            print("[DEBUG] DataFrame is EMPTY after age filter!")
+        print(f"[DEBUG] After age filter: {len(df)} players")
 
     if preprocessed_hints.get('player'):
         player = preprocessed_hints['player']
@@ -79,11 +77,9 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
             player = player[0]  # Take first player if multiple
         df = df[df['Player'] == player]
         applied_filters.append(f"Player: {player}")
-        print(f"[DEBUG] After player filter: {len(df)} players, shape: {df.shape}")
-        if df.empty:
-            print("[DEBUG] DataFrame is EMPTY after player filter!")
+        print(f"[DEBUG] After player filter: {len(df)} players")
 
-    # FIXED: Minutes filter logic - check for both minutes_op AND minutes_value
+    # Minutes filter logic
     if preprocessed_hints.get('minutes_op') and preprocessed_hints.get('minutes_value') is not None:
         minutes_op = preprocessed_hints['minutes_op']
         minutes_value = preprocessed_hints['minutes_value']
@@ -110,7 +106,7 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
         applied_filters.append("Minimum 270 minutes played")
         print(f"[DEBUG] After default minutes filter: {len(df)} players")
 
-    # Special case: if stat is goalkeeper-specific, filter to goalkeepers
+    # Auto-goalkeeper filter for GK stats
     stat = preprocessed_hints.get('stat')
     if isinstance(stat, list):
         stat = stat[0]
@@ -145,17 +141,11 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
                 df = df[df[stat] < value]
             elif op == '==':
                 df = df[df[stat] == value]
+            
             applied_filters.append(f"{stat} {op} {value}")
-            print(f"[DEBUG] After stat value filter: {len(df)} players, shape: {df.shape}")
-            if df.empty:
-                print("[DEBUG] DataFrame is EMPTY after stat value filter!")
+            print(f"[DEBUG] After stat value filter: {len(df)} players")
 
-    # After all filters:
-    print("[DEBUG] Filtered DataFrame after all filters:")
-    print(df)
-    if df.empty:
-        print("[DEBUG] DataFrame is EMPTY after all filters!")
-    
+    print(f"[DEBUG] Final filtered DataFrame: {len(df)} players")
     return df, applied_filters, original_count
 
 def sort_and_limit(df: pd.DataFrame, stat: str, top_n: int = 5) -> pd.DataFrame:
