@@ -368,12 +368,14 @@ class SimplifiedPreprocessor:
         # Handle "with" filter clauses - we want the stat before "with"
         main_part = lowered
         
+        # FIXED: Better handling of "with" clauses - only split if it's a filter
         if ' with ' in lowered:
             parts = lowered.split(' with ')
             if len(parts) > 1:
-                # Check if part after "with" is a filter
-                filter_indicators = ['more than', 'less than', 'at least', 'over', 'under', 'minutes', 'than', '+']
-                if any(indicator in parts[1] for indicator in filter_indicators):
+                # Check if part after "with" is a filter (contains numbers or filter words)
+                filter_indicators = ['more than', 'less than', 'at least', 'over', 'under', 'minutes', 'than', '+', r'\d']
+                after_with = parts[1]
+                if any(re.search(indicator, after_with) for indicator in filter_indicators):
                     main_part = parts[0].strip()
                     print(f"[DEBUG] Detected filter after 'with', using: '{main_part}'")
         
@@ -555,32 +557,6 @@ class SimplifiedPreprocessor:
             'safe_map': safe_map
         }
 
-    def _extract_stat_value_filters(self, lowered: str, result: Dict[str, Any]) -> None:
-        """Extract stat value filters (e.g., 'more than 0.5 goals')."""
-        patterns = [
-            (r"at least ([\d.]+) (\w+(?:\s+\w+)*)", ">="),
-            (r"more than ([\d.]+) (\w+(?:\s+\w+)*)", ">"),
-            (r"less than ([\d.]+) (\w+(?:\s+\w+)*)", "<"),
-            (r"under ([\d.]+) (\w+(?:\s+\w+)*)", "<"),
-            (r"over ([\d.]+) (\w+(?:\s+\w+)*)", ">"),
-            (r"exactly ([\d.]+) (\w+(?:\s+\w+)*)", "=="),
-            (r"with ([\d.]+)\+ (\w+(?:\s+\w+)*)", ">=")  # "with 0.5+ goals"
-        ]
-        
-        for pattern, op in patterns:
-            match = re.search(pattern, lowered)
-            if match:
-                value = float(match.group(1))
-                stat_phrase = match.group(2).strip()
-                
-                # Map stat phrase to actual column
-                mapped_stat = self._map_stat_phrase(stat_phrase)
-                if mapped_stat:
-                    result["stat"] = mapped_stat
-                    result["stat_op"] = op
-                    result["stat_value"] = value
-                break
-
     def _map_stat_phrase(self, phrase: str) -> Optional[str]:
         """Map a stat phrase to an actual column name."""
         phrase = phrase.strip().lower()
@@ -605,12 +581,8 @@ class SimplifiedPreprocessor:
         if matches:
             return self.alias_map[matches[0]]
         
-        # FIXED: Add specific league name fuzzy matching
-        if any(word in phrase for word in ['serie', 'seria', 'italy']):
-            if 'serie a' in self.league_keywords.values() or 'Serie A' in [v for v in self.league_keywords.values()]:
-                return None  # This will be handled by league extraction
-        
         return None
+
     def _find_player_name(self, query_name: str) -> str:
         """Find player name with simple matching."""
         query_name = query_name.strip().lower()
@@ -680,7 +652,9 @@ class SimplifiedPreprocessor:
             'xg': 'xG per 90',
             'xa': 'xA per 90',
             'passes': 'Passes per 90',
-            'tackles': 'Sliding tackles per 90'
+            'tackles': 'Sliding tackles per 90',
+            'saves': 'Saves per 90',
+            'save percentage': 'Save percentage %.1'
         }
         
         for keyword, stat in simple_mappings.items():
