@@ -452,12 +452,24 @@ def chat(req: ChatRequest):
         else:
             stat_col = ''
         
-        filtered_data = []
         # Prefer top_players if present, else filtered_data
         if data_analysis.get('top_players'):
             filtered_data = data_analysis['top_players']
         elif data_analysis.get('filtered_data'):
             filtered_data = data_analysis['filtered_data']
+        
+        # SORT FIX: Ensure filtered_data is sorted by stat_col descending
+        if filtered_data and stat_col:
+            try:
+                # Sort by stat_col in descending order (highest first)
+                filtered_data = sorted(filtered_data, 
+                                    key=lambda x: x.get(stat_col, float('-inf')) if isinstance(x.get(stat_col), (int, float)) else float('-inf'), 
+                                    reverse=True)
+                print(f"[DEBUG] After sorting, top 3:")
+                for i, player in enumerate(filtered_data[:3]):
+                    print(f"  {i+1}. {player['Player']}: {player.get(stat_col)}")
+            except Exception as e:
+                print(f"[DEBUG] Sorting failed: {e}")
         
         # Build the table
         table = None
