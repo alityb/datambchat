@@ -2,237 +2,414 @@ import re
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from typing import Dict, Any, List, Tuple, Optional
+from difflib import SequenceMatcher, get_close_matches
+from typing import List, Tuple, Dict, Any, Optional
+import pandas as pd
+import unicodedata
 from football_metrics_assistant.data_utils import load_data, get_stat_columns
-
+import numpy as np
 
 # Set style for better-looking charts
 plt.style.use('default')
 sns.set_palette("husl")
 
-print("[DEBUG] filter_players called")
+def to_python_type(val):
+    """Convert numpy types to Python native types for JSON serialization."""
+    try:
+        if val is None:
+            return None
+        if isinstance(val, np.generic):
+            val = val.item()
+        if isinstance(val, float):
+            if np.isnan(val) or np.isinf(val):
+                return None
+        return val
+    except Exception as e:
+        print(f"[ERROR] Failed to convert type for value {val}: {e}")
+        return None
 
-def filter_players(preprocessed_hints: Dict[str, Any]) -> pd.DataFrame:
+def filter_players(preprocessed_hints: Dict[str, Any]) -> Tuple[pd.DataFrame, List[str], int]:
     """
-    Filters the DataFrame based on preprocessed hints (team, position, age, league, etc.).
-    Returns filtered DataFrame and applied filters summary.
+    Filters the DataFrame based on preprocessed hints with robust error handling.
+    Returns filtered DataFrame, applied filters summary, and original count.
     """
-    print("[DEBUG] filter_players called (start)")
-    df = load_data()
-    print("[DEBUG] DataFrame shape after load:", df.shape)
-    print("[DEBUG] Unique leagues in data:", df['League'].unique())
-    original_count = len(df)
-    applied_filters = []
-    print(f"[DEBUG] Initial player count: {len(df)}")
+    print("[DEBUG] filter_players called")
     
-    if df.empty:
-        print("[DEBUG] DataFrame is EMPTY after load!")
-    
-    # Apply filters based on preprocessed hints
-    if preprocessed_hints.get('team'):
-        team = preprocessed_hints['team']
-        if isinstance(team, list):
-            team = team[0]  # Take first team if multiple
-        df = df[df['Team within selected timeframe'] == team]
-        applied_filters.append(f"Team: {team}")
-        print(f"[DEBUG] After team filter: {len(df)} players, shape: {df.shape}")
-
-    if preprocessed_hints.get('position'):
-        position = preprocessed_hints['position']
-        print(f"[DEBUG] Position filter value: {position}")
-        if isinstance(position, list):
-            df = df[df['Position'].isin(position)]
-            applied_filters.append(f"Position: {', '.join(position)}")
-        else:
-            df = df[df['Position'] == position]
-            applied_filters.append(f"Position: {position}")
-        print(f"[DEBUG] After position filter: {len(df)} players")
-
-    if preprocessed_hints.get('league'):
-        league = preprocessed_hints['league']
-        if isinstance(league, list):
-            df = df[df['League'].isin(league)]
-            applied_filters.append(f"Leagues: {', '.join(league)}")
-        else:
-            df = df[df['League'] == league]
-            applied_filters.append(f"League: {league}")
-        print(f"[DEBUG] After league filter: {len(df)} players")
-
-    if preprocessed_hints.get('age_filter'):
-        age_filter = preprocessed_hints['age_filter']
-        op = age_filter['op']
-        value = age_filter['value']
-        if op == '<':
-            df = df[df['Age'] < value]
-        elif op == '>':
-            df = df[df['Age'] > value]
-        elif op == '==':
-            df = df[df['Age'] == value]
-        applied_filters.append(f"Age {op} {value}")
-        print(f"[DEBUG] After age filter: {len(df)} players")
-
-    if preprocessed_hints.get('player'):
-        player = preprocessed_hints['player']
-        if isinstance(player, list):
-            player = player[0]  # Take first player if multiple
-        df = df[df['Player'] == player]
-        applied_filters.append(f"Player: {player}")
-        print(f"[DEBUG] After player filter: {len(df)} players")
-
-    # Minutes filter logic
-    if preprocessed_hints.get('minutes_op') and preprocessed_hints.get('minutes_value') is not None:
-        minutes_op = preprocessed_hints['minutes_op']
-        minutes_value = preprocessed_hints['minutes_value']
+    try:
+        # Add null safety check
+        if not preprocessed_hints:
+            preprocessed_hints = {}
         
-        print(f"[DEBUG] Applying custom minutes filter: {minutes_op} {minutes_value}")
+        df = load_data()
+        if df is None or df.empty:
+            print("[ERROR] Failed to load data or data is empty")
+            return pd.DataFrame(), [], 0
         
-        if minutes_op == '>=':
-            df = df[df['Minutes played'] >= minutes_value]
-        elif minutes_op == '>':
-            df = df[df['Minutes played'] > minutes_value]
-        elif minutes_op == '<=':
-            df = df[df['Minutes played'] <= minutes_value]
-        elif minutes_op == '<':
-            df = df[df['Minutes played'] < minutes_value]
-        elif minutes_op == '==':
-            df = df[df['Minutes played'] == minutes_value]
+        print(f"[DEBUG] DataFrame shape after load: {df.shape}")
+        original_count = len(df)
+        applied_filters = []
+        print(f"[DEBUG] Initial player count: {len(df)}")
         
-        applied_filters.append(f"Minutes played {minutes_op} {minutes_value}")
-        print(f"[DEBUG] After custom minutes filter: {len(df)} players")
-        
-    else:
-        # Apply default minimum 270 minutes only if no custom minutes filter
-        df = df[df['Minutes played'] >= 270]
-        applied_filters.append("Minimum 270 minutes played")
-        print(f"[DEBUG] After default minutes filter: {len(df)} players")
+        # Apply team filter
+        if preprocessed_hints.get('team'):
+            try:
+                team = preprocessed_hints['team']
+                if isinstance(team, list):
+                    team = team[0]
+                
+                if 'Team within selected timeframe' in df.columns:
+                    df = df[df['Team within selected timeframe'] == team]
+                    applied_filters.append(f"Team: {team}")
+                    print(f"[DEBUG] After team filter: {len(df)} players")
+                else:
+                    print("[ERROR] 'Team within selected timeframe' column not found")
+            except Exception as e:
+                print(f"[ERROR] Team filter failed: {e}")
 
-    # Auto-goalkeeper filter for GK stats
-    stat = preprocessed_hints.get('stat')
-    if isinstance(stat, list):
-        stat = stat[0]
-    stat = stat.lower() if stat else ''
-    gk_stats = [
-        'clean sheets',
-        'saves per 90',
-        'save percentage %.1',
-        'xg conceded per 90',
-    ]
-    if stat in [s.lower() for s in gk_stats]:
-        if 'Position' in df.columns:
-            df = df[df['Position'] == 'Goalkeeper']
-            applied_filters.append('Position: Goalkeeper (auto for goalkeeper stat)')
-            print(f"[DEBUG] After auto-goalkeeper filter: {len(df)} players")
+        # Apply position filter
+        if preprocessed_hints.get('position'):
+            try:
+                position = preprocessed_hints['position']
+                print(f"[DEBUG] Position filter value: {position}")
+                
+                if 'Position' in df.columns:
+                    if isinstance(position, list):
+                        df = df[df['Position'].isin(position)]
+                        applied_filters.append(f"Position: {', '.join(position)}")
+                    else:
+                        df = df[df['Position'] == position]
+                        applied_filters.append(f"Position: {position}")
+                    print(f"[DEBUG] After position filter: {len(df)} players")
+                else:
+                    print("[ERROR] 'Position' column not found")
+            except Exception as e:
+                print(f"[ERROR] Position filter failed: {e}")
 
-    # FIXED: Stat value filter - only apply once and track it properly
-    if (preprocessed_hints.get('stat') and 
-        preprocessed_hints.get('stat_value') is not None and 
-        not any('per 90 >=' in f for f in applied_filters)):  # Avoid duplicate
+        # Apply league filter
+        if preprocessed_hints.get('league'):
+            try:
+                league = preprocessed_hints['league']
+                
+                if 'League' in df.columns:
+                    if isinstance(league, list):
+                        df = df[df['League'].isin(league)]
+                        applied_filters.append(f"Leagues: {', '.join(league)}")
+                    else:
+                        df = df[df['League'] == league]
+                        applied_filters.append(f"League: {league}")
+                    print(f"[DEBUG] After league filter: {len(df)} players")
+                else:
+                    print("[ERROR] 'League' column not found")
+            except Exception as e:
+                print(f"[ERROR] League filter failed: {e}")
+
+        # Apply age filter
+        if preprocessed_hints.get('age_filter'):
+            try:
+                age_filter = preprocessed_hints['age_filter']
+                op = age_filter['op']
+                value = age_filter['value']
+                
+                if 'Age' in df.columns:
+                    if op == '<':
+                        df = df[df['Age'] < value]
+                    elif op == '>':
+                        df = df[df['Age'] > value]
+                    elif op == '==':
+                        df = df[df['Age'] == value]
+                    elif op == '<=':
+                        df = df[df['Age'] <= value]
+                    elif op == '>=':
+                        df = df[df['Age'] >= value]
+                    
+                    applied_filters.append(f"Age {op} {value}")
+                    print(f"[DEBUG] After age filter: {len(df)} players")
+                else:
+                    print("[ERROR] 'Age' column not found")
+            except Exception as e:
+                print(f"[ERROR] Age filter failed: {e}")
+
+        # Apply player filter
+        if preprocessed_hints.get('player'):
+            try:
+                player = preprocessed_hints['player']
+                if isinstance(player, list):
+                    player = player[0]
+                
+                if 'Player' in df.columns:
+                    df = df[df['Player'] == player]
+                    applied_filters.append(f"Player: {player}")
+                    print(f"[DEBUG] After player filter: {len(df)} players")
+                else:
+                    print("[ERROR] 'Player' column not found")
+            except Exception as e:
+                print(f"[ERROR] Player filter failed: {e}")
+
+        # Minutes filter logic
+        minutes_filter_applied = False
         
-        stat = preprocessed_hints['stat']
-        op = preprocessed_hints.get('stat_op', '>=')
-        value = preprocessed_hints['stat_value']
+        # Check if custom minutes filter is specified
+        if preprocessed_hints.get('minutes_op') and preprocessed_hints.get('minutes_value') is not None:
+            try:
+                minutes_op = preprocessed_hints['minutes_op']
+                minutes_value = preprocessed_hints['minutes_value']
+                
+                print(f"[DEBUG] Applying custom minutes filter: {minutes_op} {minutes_value}")
+                
+                if 'Minutes played' in df.columns:
+                    if minutes_op == '>=':
+                        df = df[df['Minutes played'] >= minutes_value]
+                    elif minutes_op == '>':
+                        df = df[df['Minutes played'] > minutes_value]
+                    elif minutes_op == '<=':
+                        df = df[df['Minutes played'] <= minutes_value]
+                    elif minutes_op == '<':
+                        df = df[df['Minutes played'] < minutes_value]
+                    elif minutes_op == '==':
+                        df = df[df['Minutes played'] == minutes_value]
+                    
+                    applied_filters.append(f"Minutes played {minutes_op} {minutes_value}")
+                    minutes_filter_applied = True
+                    print(f"[DEBUG] After custom minutes filter: {len(df)} players")
+                else:
+                    print("[ERROR] 'Minutes played' column not found")
+            except Exception as e:
+                print(f"[ERROR] Custom minutes filter failed: {e}")
         
-        if stat in df.columns:
-            if op == '>=':
-                df = df[df[stat] >= value]
-            elif op == '>':
-                df = df[df[stat] > value]
-            elif op == '<=':
-                df = df[df[stat] <= value]
-            elif op == '<':
-                df = df[df[stat] < value]
-            elif op == '==':
-                df = df[df[stat] == value]
+        # Apply default minimum 270 minutes only if no custom minutes filter was applied
+        if not minutes_filter_applied:
+            try:
+                if 'Minutes played' in df.columns:
+                    df = df[df['Minutes played'] >= 270]
+                    applied_filters.append("Minimum 270 minutes played")
+                    print(f"[DEBUG] After default minutes filter: {len(df)} players")
+                else:
+                    print("[ERROR] 'Minutes played' column not found for default filter")
+            except Exception as e:
+                print(f"[ERROR] Default minutes filter failed: {e}")
+
+        # Auto-goalkeeper filter
+        try:
+            stat = preprocessed_hints.get('stat')
+            if isinstance(stat, list):
+                stat = stat[0]
+            stat = stat.lower() if stat else ''
             
-            applied_filters.append(f"{stat} {op} {value}")
-            print(f"[DEBUG] After stat value filter: {len(df)} players")
+            gk_stats = [
+                'clean sheets',
+                'saves per 90',
+                'save percentage %.1',
+                'xg conceded per 90',
+            ]
+            
+            is_gk_stat = any(gk_stat.lower() == stat for gk_stat in gk_stats)
+            
+            if is_gk_stat and 'Position' in df.columns:
+                df = df[df['Position'] == 'Goalkeeper']
+                applied_filters.append('Position: Goalkeeper (auto-applied for GK stat)')
+                print(f"[DEBUG] After auto-goalkeeper filter: {len(df)} players")
+        except Exception as e:
+            print(f"[ERROR] Auto-goalkeeper filter failed: {e}")
 
-    print(f"[DEBUG] Final filtered DataFrame: {len(df)} players")
-    return df, applied_filters, original_count
+        # Stat value filter
+        if (preprocessed_hints.get('stat') and 
+            preprocessed_hints.get('stat_value') is not None and
+            not any('Minutes played' in f and '>=' in f for f in applied_filters)):
+            
+            try:
+                stat = preprocessed_hints['stat']
+                op = preprocessed_hints.get('stat_op', '>=')
+                value = preprocessed_hints['stat_value']
+                
+                if stat in df.columns:
+                    if op == '>=':
+                        df = df[df[stat] >= value]
+                    elif op == '>':
+                        df = df[df[stat] > value]
+                    elif op == '<=':
+                        df = df[df[stat] <= value]
+                    elif op == '<':
+                        df = df[df[stat] < value]
+                    elif op == '==':
+                        df = df[df[stat] == value]
+                    
+                    applied_filters.append(f"{stat} {op} {value}")
+                    print(f"[DEBUG] After stat value filter: {len(df)} players")
+                else:
+                    print(f"[ERROR] Stat column '{stat}' not found in dataframe")
+            except Exception as e:
+                print(f"[ERROR] Stat value filter failed: {e}")
+
+        print(f"[DEBUG] Final filtered DataFrame: {len(df)} players")
+        return df, applied_filters, original_count
+        
+    except Exception as e:
+        print(f"[ERROR] filter_players completely failed: {e}")
+        return pd.DataFrame(), [f"Filter error: {str(e)}"], 0
+
+def create_combined_stat(df: pd.DataFrame, stat1: str, stat2: str, operation: str = '+', new_stat_name: str = None) -> pd.DataFrame:
+    """
+    Create a new statistic by combining two existing stats.
+    """
+    try:
+        if df.empty or stat1 not in df.columns or stat2 not in df.columns:
+            raise ValueError(f"Required columns not found: {stat1}, {stat2}")
+        
+        if new_stat_name is None:
+            if operation == '+':
+                new_stat_name = f"{stat1} + {stat2}"
+            elif operation == '-':
+                new_stat_name = f"{stat1} - {stat2}"
+            elif operation == '*':
+                new_stat_name = f"{stat1} × {stat2}"
+            elif operation == '/':
+                new_stat_name = f"{stat1} / {stat2}"
+            elif operation == 'ratio':
+                new_stat_name = f"{stat1} to {stat2} ratio"
+        
+        df_copy = df.copy()
+        
+        if operation == '+':
+            df_copy[new_stat_name] = df_copy[stat1] + df_copy[stat2]
+        elif operation == '-':
+            df_copy[new_stat_name] = df_copy[stat1] - df_copy[stat2]
+        elif operation == '*':
+            df_copy[new_stat_name] = df_copy[stat1] * df_copy[stat2]
+        elif operation == '/' or operation == 'ratio':
+            df_copy[new_stat_name] = df_copy[stat1] / df_copy[stat2].replace(0, np.nan)
+        else:
+            raise ValueError(f"Unsupported operation: {operation}")
+        
+        df_copy[new_stat_name] = df_copy[new_stat_name].replace([np.inf, -np.inf], np.nan)
+        
+        print(f"[DEBUG] Created combined stat '{new_stat_name}' using {stat1} {operation} {stat2}")
+        return df_copy
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to create combined stat: {e}")
+        raise
 
 def sort_and_limit(df: pd.DataFrame, stat: str, top_n: int = 5) -> pd.DataFrame:
     """
-    Sorts DataFrame by a stat and returns top N players.
+    Sorts DataFrame by a stat and returns top N players with robust error handling.
     """
-    if stat not in df.columns:
-        raise ValueError(f"Stat '{stat}' not found in data. Available stats: {list(df.columns)}")
-    
-    if not pd.api.types.is_numeric_dtype(df[stat]):
-        raise ValueError(f"Stat '{stat}' is not numeric. Column dtype: {df[stat].dtype}")
-    
-    if df[stat].dropna().empty:
-        raise ValueError(f"Stat '{stat}' has no valid (non-NaN) values for the filtered players.")
+    try:
+        if df is None or df.empty:
+            print("[ERROR] DataFrame is empty for sorting")
+            return pd.DataFrame()
+        
+        if not stat or stat not in df.columns:
+            print(f"[ERROR] Stat '{stat}' not found in data. Available stats: {list(df.columns)}")
+            return pd.DataFrame()
+        
+        if not pd.api.types.is_numeric_dtype(df[stat]):
+            print(f"[ERROR] Stat '{stat}' is not numeric. Column dtype: {df[stat].dtype}")
+            return pd.DataFrame()
+        
+        valid_data = df[stat].dropna()
+        if valid_data.empty:
+            print(f"[ERROR] Stat '{stat}' has no valid (non-NaN) values for the filtered players.")
+            return pd.DataFrame()
 
-    # Sort by the stat (descending for most stats, ascending for some)
-    ascending_stats = ['Age', 'Minutes played', 'Matches played']  # Lower is better
-    ascending = stat in ascending_stats
-    
-    return df.nlargest(top_n, stat) if not ascending else df.nsmallest(top_n, stat)
+        # Sort by the stat (descending for most stats, ascending for some)
+        ascending_stats = ['Age', 'Minutes played', 'Matches played', 'xG conceded per 90', 'Yellow cards', 'Red cards']
+        ascending = stat in ascending_stats
+        
+        if ascending:
+            return df.nsmallest(top_n, stat)
+        else:
+            return df.nlargest(top_n, stat)
+            
+    except Exception as e:
+        print(f"[ERROR] sort_and_limit failed: {e}")
+        return pd.DataFrame()
 
 def generate_chart(df: pd.DataFrame, stat: str, top_n: int = 5, chart_type: str = 'bar') -> Tuple[plt.Figure, str]:
     """
-    Generates a chart for the top N players in a given stat.
-    Returns the figure and a description of the chart.
+    Generates a chart for the top N players in a given stat with error handling.
     """
-    if df.empty:
-        raise ValueError("No data to plot")
-    
-    # Sort and get top N
-    top_players = sort_and_limit(df, stat, top_n)
-    
-    # Create the chart
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
-    if chart_type == 'bar':
-        bars = ax.bar(range(len(top_players)), top_players[stat])
-        ax.set_xticks(range(len(top_players)))
-        ax.set_xticklabels(top_players['Player'], rotation=45, ha='right')
-        ax.set_ylabel(stat)
-        ax.set_title(f"Top {top_n} Players by {stat}")
+    try:
+        if df.empty:
+            raise ValueError("No data to plot")
         
-        # Add value labels on bars
-        for i, bar in enumerate(bars):
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height,
-                   f'{height:.2f}', ha='center', va='bottom')
+        # Sort and get top N
+        top_players = sort_and_limit(df, stat, top_n)
+        if top_players.empty:
+            raise ValueError("No valid data after sorting")
         
-        # Add team information
-        for i, (_, player) in enumerate(top_players.iterrows()):
-            team = player.get('Team within selected timeframe', 'Unknown')
-            ax.text(i, ax.get_ylim()[0], team, ha='center', va='top', 
-                   fontsize=8, alpha=0.7)
-    
-    elif chart_type == 'horizontal_bar':
-        bars = ax.barh(range(len(top_players)), top_players[stat])
-        ax.set_yticks(range(len(top_players)))
-        ax.set_yticklabels(top_players['Player'])
-        ax.set_xlabel(stat)
-        ax.set_title(f"Top {top_n} Players by {stat}")
+        # Create the chart
+        fig, ax = plt.subplots(figsize=(12, 8))
         
-        # Add value labels
-        for i, bar in enumerate(bars):
-            width = bar.get_width()
-            ax.text(width, bar.get_y() + bar.get_height()/2.,
-                   f'{width:.2f}', ha='left', va='center')
-    
-    plt.tight_layout()
-    
-    # Generate description
-    description = f"Chart showing top {top_n} players by {stat}. "
-    if not top_players.empty:
-        best_player = top_players.iloc[0]
-        description += f"Best performer: {best_player['Player']} ({best_player['Team within selected timeframe']}) with {best_player[stat]:.2f} {stat}."
-    
-    return fig, description
+        if chart_type == 'bar':
+            bars = ax.bar(range(len(top_players)), top_players[stat])
+            ax.set_xticks(range(len(top_players)))
+            ax.set_xticklabels(top_players['Player'], rotation=45, ha='right')
+            ax.set_ylabel(stat)
+            ax.set_title(f"Top {top_n} Players by {stat}")
+            
+            # Add value labels on bars
+            for i, bar in enumerate(bars):
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height,
+                       f'{height:.2f}', ha='center', va='bottom')
+            
+            # Add team information
+            for i, (_, player) in enumerate(top_players.iterrows()):
+                team = player.get('Team within selected timeframe', 'Unknown')
+                ax.text(i, ax.get_ylim()[0], team, ha='center', va='top', 
+                       fontsize=8, alpha=0.7)
+        
+        elif chart_type == 'horizontal_bar':
+            bars = ax.barh(range(len(top_players)), top_players[stat])
+            ax.set_yticks(range(len(top_players)))
+            ax.set_yticklabels(top_players['Player'])
+            ax.set_xlabel(stat)
+            ax.set_title(f"Top {top_n} Players by {stat}")
+            
+            # Add value labels
+            for i, bar in enumerate(bars):
+                width = bar.get_width()
+                ax.text(width, bar.get_y() + bar.get_height()/2.,
+                       f'{width:.2f}', ha='left', va='center')
+        
+        plt.tight_layout()
+        
+        # Generate description
+        description = f"Chart showing top {top_n} players by {stat}. "
+        if not top_players.empty:
+            best_player = top_players.iloc[0]
+            team = best_player.get('Team within selected timeframe', 'Unknown')
+            description += f"Best performer: {best_player['Player']} ({team}) with {best_player[stat]:.2f} {stat}."
+        
+        return fig, description
+        
+    except Exception as e:
+        print(f"[ERROR] Chart generation failed: {e}")
+        # Return empty figure with error message
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.text(0.5, 0.5, f"Chart generation failed:\n{str(e)}", 
+                ha='center', va='center', transform=ax.transAxes)
+        ax.set_title("Chart Generation Error")
+        return fig, f"Failed to generate chart: {str(e)}"
 
 def evaluate_stat_formula(df: pd.DataFrame, formula_data: Dict[str, Any]) -> pd.DataFrame:
     """
-    Evaluate a stat formula and add the computed column to the dataframe.
+    Evaluate a stat formula and add the computed column to the dataframe with error handling.
     """
     try:
-        safe_map = formula_data['safe_map']
-        expr = formula_data['expr']
-        display_expr = formula_data['display_expr']
+        if df is None or df.empty:
+            print("[ERROR] DataFrame is empty for formula evaluation")
+            return pd.DataFrame()
+        
+        if not formula_data or not isinstance(formula_data, dict):
+            raise ValueError("Invalid formula data provided")
+        
+        safe_map = formula_data.get('safe_map', {})
+        expr = formula_data.get('expr', '')
+        display_expr = formula_data.get('display_expr', 'Unknown Formula')
+        
+        if not safe_map or not expr:
+            raise ValueError("Formula data missing required fields")
         
         print(f"[DEBUG] Evaluating formula: {display_expr}")
         print(f"[DEBUG] Safe expression: {expr}")
