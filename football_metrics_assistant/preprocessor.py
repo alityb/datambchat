@@ -11,17 +11,101 @@ from difflib import get_close_matches
 
 class SimplifiedPreprocessor:
     """
-    Simplified preprocessor that handles core cases correctly.
-    Uses clear, debuggable extraction with minimal interdependencies.
-    Now includes improved player name matching.
+    Robust preprocessor with comprehensive error handling and improved stat matching.
     """
     
     def __init__(self):
-        self.alias_map = get_alias_to_column_map()
-        self.teams = get_all_teams()
-        self.players = get_all_players()
-        self.positions = get_all_positions()
-        self.leagues = get_all_leagues()
+        try:
+            self.alias_map = get_alias_to_column_map()
+            self.teams = get_all_teams()
+            self.players = get_all_players()
+            self.positions = get_all_positions()
+            self.leagues = get_all_leagues()
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize data: {e}")
+            # Provide fallback empty collections
+            self.alias_map = {}
+            self.teams = []
+            self.players = []
+            self.positions = []
+            self.leagues = []
+        
+        # Enhanced stat mappings with common variations
+        self.enhanced_stat_mappings = {
+            # Goalkeeper stats
+            'saves': 'Saves per 90',
+            'save percentage': 'Save percentage %.1',
+            'saves per 90': 'Saves per 90',
+            'clean sheets': 'Clean sheets',
+            
+            # Defensive stats  
+            'tackles': 'Sliding tackles per 90',
+            'tackles per 90': 'Sliding tackles per 90',
+            'sliding tackles': 'Sliding tackles per 90',
+            'sliding tackles per 90': 'Sliding tackles per 90',
+            'interceptions': 'Interceptions per 90',
+            'interceptions per 90': 'Interceptions per 90',
+            'clearances': 'Clearances per 90',
+            'clearances per 90': 'Clearances per 90',
+            'blocks': 'Blocks per 90',
+            'blocks per 90': 'Blocks per 90',
+            'duels won': 'Duels won %',
+            'duels won %': 'Duels won %',
+            'duels won per 90': 'Duels won %',
+            'aerial duels': 'Aerial duels per 90',
+            'aerial duels per 90': 'Aerial duels per 90',
+            'aerial duels won': 'Aerial duels won per 90',
+            'aerial duels won per 90': 'Aerial duels won per 90',
+            
+            # Attacking stats
+            'goals': 'Goals per 90',
+            'goals per 90': 'Goals per 90',
+            'goals per game': 'Goals per 90',
+            'assists': 'Assists per 90',
+            'assists per 90': 'Assists per 90',
+            'assists per game': 'Assists per 90',
+            'xg': 'xG per 90',
+            'xg per 90': 'xG per 90',
+            'expected goals': 'xG per 90',
+            'expected goals per 90': 'xG per 90',
+            'xa': 'xA per 90',
+            'xa per 90': 'xA per 90',
+            'expected assists': 'xA per 90',
+            'expected assists per 90': 'xA per 90',
+            'npxg': 'npxG per 90',
+            'npxg per 90': 'npxG per 90',
+            'non penalty xg': 'npxG per 90',
+            'goals and assists': 'Goals + Assists per 90',
+            'goals + assists': 'Goals + Assists per 90',
+            'goals plus assists': 'Goals + Assists per 90',
+            'shots': 'Shots per 90',
+            'shots per 90': 'Shots per 90',
+            'shots on target': 'Shots on target %.1',
+            
+            # Passing stats
+            'passes': 'Passes per 90',
+            'passes per 90': 'Passes per 90',
+            'pass completion': 'Pass completion %.1',
+            'pass accuracy': 'Pass completion %.1',
+            'key passes': 'Key passes per 90',
+            'key passes per 90': 'Key passes per 90',
+            'progressive passes': 'Progressive passes per 90',
+            'progressive passes per 90': 'Progressive passes per 90',
+            'crosses': 'Crosses per 90',
+            'crosses per 90': 'Crosses per 90',
+            'cross accuracy': 'Cross accuracy %.1',
+            
+            # Physical stats
+            'touches': 'Touches per 90',
+            'touches per 90': 'Touches per 90',
+            'dribbles': 'Dribbles attempted per 90',
+            'dribbles attempted': 'Dribbles attempted per 90',
+            'dribbles per 90': 'Dribbles attempted per 90',
+            'dribble success': 'Dribble success rate %.1',
+            'dribble success rate': 'Dribble success rate %.1',
+            'progressive carries': 'Progressive carries per 90',
+            'progressive carries per 90': 'Progressive carries per 90',
+        }
         
         # Core league mappings
         self.league_keywords = {
