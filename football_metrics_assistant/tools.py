@@ -206,7 +206,7 @@ def filter_players(preprocessed_hints: Dict[str, Any]) -> Tuple[pd.DataFrame, Li
             
             if is_gk_stat and 'Position' in df.columns:
                 df = df[df['Position'] == 'Goalkeeper']
-                applied_filters.append('Position: Goalkeeper (auto-applied for GK stat)')
+                # applied_filters.append('Position: Goalkeeper')
                 print(f"[DEBUG] After auto-goalkeeper filter: {len(df)} players")
         except Exception as e:
             print(f"[ERROR] Auto-goalkeeper filter failed: {e}")
