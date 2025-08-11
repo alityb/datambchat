@@ -111,6 +111,8 @@ def generate_summary(data_analysis, preprocessed, filtered_data, stat_col):
     stat_filter_added = False
     
     for f in applied_filters:
+        if not f:  # Skip None or empty filters
+            continue
         if f.startswith("Position:"):
             pos = f.replace("Position: ", "")
             filter_descriptions.append(pos.lower() + "s")
@@ -137,8 +139,8 @@ def generate_summary(data_analysis, preprocessed, filtered_data, stat_col):
     if filtered_data and stat_col:
         try:
             top_player = filtered_data[0]  # First in list (highest value)
-            player_name = top_player['Player']
-            team = top_player['Team within selected timeframe']
+            player_name = top_player.get('Player', 'Unknown Player')
+            team = top_player.get('Team within selected timeframe', 'Unknown Team')
             stat_value = top_player.get(stat_col, 'N/A')
             
             if base_desc:
@@ -146,6 +148,7 @@ def generate_summary(data_analysis, preprocessed, filtered_data, stat_col):
             else:
                 summary = f"Top {stat_col}: {player_name} ({team}) with {stat_value}."
         except Exception as e:
+            print(f"[ERROR] Summary generation failed: {e}")
             summary = f"Found {count} players {base_desc}." if base_desc else f"Found {count} players."
     else:
         summary = f"Found {count} players {base_desc}." if base_desc else f"Found {count} players."
@@ -230,103 +233,128 @@ def health():
 
 @app.post("/chat")
 def chat(req: ChatRequest):
-    # 1. Preprocess the query for structured hints
-    preprocessed = preprocess_query(req.message)
+    try:
+        # 1. Preprocess the query for structured hints
+        preprocessed = preprocess_query(req.message)
 
-    # Handle PLAYER_REPORT queries early
-    if preprocessed.get('query_type') == 'PLAYER_REPORT':
-        player_name = preprocessed.get('player')
-        if not player_name:
-            return {
-                "summary": "No player specified for report. Please specify a player name.",
-                "table": None,
-                "preprocessed": preprocessed,
-                "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
-                "data_analysis": {"error": "No player specified"}
-            }
-        
-        try:
-            report_data = generate_player_report(player_name)
-            if report_data.get('success'):
-                return format_player_report_response(report_data)
-            else:
+        # Handle PLAYER_REPORT queries early
+        if preprocessed.get('query_type') == 'PLAYER_REPORT':
+            player_name = preprocessed.get('player')
+            if not player_name:
                 return {
-                    "summary": report_data.get('error', 'Failed to generate player report'),
+                    "summary": "No player specified for report. Please specify a player name.",
                     "table": None,
                     "preprocessed": preprocessed,
                     "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
-                    "data_analysis": report_data
+                    "data_analysis": {"error": "No player specified"}
                 }
-        except Exception as e:
-            return {
-                "summary": f"Error generating player report: {str(e)}",
-                "table": None,
-                "preprocessed": preprocessed,
-                "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
-                "data_analysis": {"error": str(e)}
-            }
-
-    # Handle STAT_DEFINITION queries early
-    if preprocessed.get('query_type') == 'STAT_DEFINITION':
-        stat_name = preprocessed.get('stat')
-        if not stat_name:
-            return {
-                "summary": "No statistic specified for definition. Please specify a statistic name.",
-                "table": None,
-                "preprocessed": preprocessed,
-                "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
-                "data_analysis": {"error": "No statistic specified"}
-            }
-        
-        try:
-            from football_metrics_assistant.tools import generate_stat_definition_report
-            definition_data = generate_stat_definition_report(stat_name)
-            if definition_data.get('success'):
-                return format_stat_definition_response(definition_data)
-            else:
-                error_msg = definition_data.get('error', 'Failed to generate stat definition')
-                suggestions = definition_data.get('suggestions', [])
-                if suggestions:
-                    error_msg += f"\n\nDid you mean: {', '.join(suggestions)}?"
+            
+            try:
+                report_data = generate_player_report(player_name)
+                if report_data.get('success'):
+                    return format_player_report_response(report_data)
+                else:
+                    return {
+                        "summary": report_data.get('error', 'Failed to generate player report'),
+                        "table": None,
+                        "preprocessed": preprocessed,
+                        "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+                        "data_analysis": report_data
+                    }
+            except Exception as e:
+                print(f"[ERROR] Player report failed: {str(e)}")
                 return {
-                    "summary": error_msg,
+                    "summary": f"Error generating player report: {str(e)}",
                     "table": None,
                     "preprocessed": preprocessed,
                     "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
-                    "data_analysis": definition_data
+                    "data_analysis": {"error": str(e)}
                 }
-        except Exception as e:
-            return {
-                "summary": f"Error generating stat definition: {str(e)}",
-                "table": None,
-                "preprocessed": preprocessed,
-                "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
-                "data_analysis": {"error": str(e)}
-            }
 
-    # 2. Retrieve stat definitions/context using preprocessed hints
-    retrieval = retriever.retrieve(req.message, preprocessed_hints=preprocessed)
-    stat_context = retrieval.get("stat_definitions", [])
-    position_context = retrieval.get("position_info", [])
-    analysis_context = retrieval.get("analysis_guides", [])
+        # Handle STAT_DEFINITION queries early
+        if preprocessed.get('query_type') == 'STAT_DEFINITION':
+            stat_name = preprocessed.get('stat')
+            if not stat_name:
+                return {
+                    "summary": "No statistic specified for definition. Please specify a statistic name.",
+                    "table": None,
+                    "preprocessed": preprocessed,
+                    "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+                    "data_analysis": {"error": "No statistic specified"}
+                }
+            
+            try:
+                from football_metrics_assistant.tools import generate_stat_definition_report
+                definition_data = generate_stat_definition_report(stat_name)
+                if definition_data.get('success'):
+                    return format_stat_definition_response(definition_data)
+                else:
+                    error_msg = definition_data.get('error', 'Failed to generate stat definition')
+                    suggestions = definition_data.get('suggestions', [])
+                    if suggestions:
+                        error_msg += f"\n\nDid you mean: {', '.join(suggestions)}?"
+                    return {
+                        "summary": error_msg,
+                        "table": None,
+                        "preprocessed": preprocessed,
+                        "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+                        "data_analysis": definition_data
+                    }
+            except Exception as e:
+                print(f"[ERROR] Stat definition failed: {str(e)}")
+                return {
+                    "summary": f"Error generating stat definition: {str(e)}",
+                    "table": None,
+                    "preprocessed": preprocessed,
+                    "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+                    "data_analysis": {"error": str(e)}
+                }
 
-    # 3. Use tools for real data filtering/sorting
-    data_analysis = None
-    # Always analyze if there are any filters or if it's a COUNT/LIST query
-    if (
-        preprocessed.get('stat')
-        or preprocessed.get('query_type', '').startswith('COUNT')
-        or preprocessed.get('query_type', '').startswith('LIST')
-        or preprocessed.get('top_n')
-        or preprocessed.get('team')
-        or preprocessed.get('position')
-        or preprocessed.get('league')
-        or preprocessed.get('age_filter')
-    ):
+        # 2. Retrieve stat definitions/context using preprocessed hints
         try:
-            data_analysis = analyze_query(preprocessed)
+            retrieval = retriever.retrieve(req.message, preprocessed_hints=preprocessed)
+            stat_context = retrieval.get("stat_definitions", [])
+            position_context = retrieval.get("position_info", [])
+            analysis_context = retrieval.get("analysis_guides", [])
         except Exception as e:
-            data_analysis = {"error": f"Data analysis failed: {str(e)}"}
+            print(f"[ERROR] Retrieval failed: {str(e)}")
+            stat_context = []
+            position_context = []
+            analysis_context = []
+
+        # 3. Use tools for real data filtering/sorting
+        data_analysis = None
+        # Always analyze if there are any filters or if it's a COUNT/LIST query
+        if (
+            preprocessed.get('stat')
+            or preprocessed.get('query_type', '').startswith('COUNT')
+            or preprocessed.get('query_type', '').startswith('LIST')
+            or preprocessed.get('top_n')
+            or preprocessed.get('team')
+            or preprocessed.get('position')
+            or preprocessed.get('league')
+            or preprocessed.get('age_filter')
+            or preprocessed.get('minutes_op')
+            or preprocessed.get('stat_op')
+        ):
+            try:
+                data_analysis = analyze_query(preprocessed)
+            except Exception as e:
+                print(f"[ERROR] Data analysis failed: {str(e)}")
+                data_analysis = {"error": f"Data analysis failed: {str(e)}"}
+            
+    except Exception as e:
+        print(f"[ERROR] Chat endpoint failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "summary": f"An error occurred while processing your query: {str(e)}",
+            "table": None,
+            "preprocessed": {"error": str(e)},
+            "retrieval": {"stat_definitions": 0, "position_info": 0, "analysis_guides": 0},
+            "data_analysis": {"error": str(e)}
+        }
+
     
     # 4. Compose context for LLM
     context_parts = []
@@ -506,6 +534,7 @@ def chat(req: ChatRequest):
             },
             "data_analysis": clean_dict_for_json(data_analysis) if data_analysis else None
         }
+    
     else:
         # For non-data queries or no results, return a clear message
         return {
@@ -519,6 +548,7 @@ def chat(req: ChatRequest):
             },
             "data_analysis": clean_dict_for_json(data_analysis) if data_analysis else None
         }
+    
 
 @app.get("/stat-definitions")
 def stat_definitions():
