@@ -340,7 +340,34 @@ def chat(req: ChatRequest):
             except Exception as e:
                 print(f"[ERROR] Data analysis failed: {str(e)}")
                 data_analysis = {"error": f"Data analysis failed: {str(e)}"}
+        
+        # Handle the case where data_analysis has an error but contains useful information
+        if data_analysis and data_analysis.get('error'):
+            # Extract useful information from error response
+            error_count = data_analysis.get('count', 0)
+            applied_filters = data_analysis.get('applied_filters', [])
+            original_count = data_analysis.get('original_count', 0)
             
+            # If this is a "no players found" error, return a proper response
+            if "No players found" in data_analysis.get('error', ''):
+                return {
+                    "summary": f"No players found matching your criteria.",
+                    "table": None,
+                    "preprocessed": preprocessed,
+                    "retrieval": {
+                        "stat_definitions": len(stat_context),
+                        "position_info": len(position_context),
+                        "analysis_guides": len(analysis_context)
+                    },
+                    "data_analysis": {
+                        "success": False,
+                        "count": 0,
+                        "applied_filters": applied_filters,
+                        "original_count": original_count,
+                        "error": data_analysis.get('error')
+                    }
+                }
+    
     except Exception as e:
         print(f"[ERROR] Chat endpoint failed: {str(e)}")
         import traceback
