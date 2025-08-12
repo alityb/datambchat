@@ -1,5 +1,5 @@
 from typing import Dict, Any, List, Optional
-from vector_store import VectorStore
+from football_metrics_assistant.vector_store import VectorStore
 
 class HybridRetriever:
     def __init__(self, vector_db: VectorStore = None):
