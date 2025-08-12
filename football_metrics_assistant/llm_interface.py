@@ -1,34 +1,41 @@
-import requests
+import google.generativeai as genai
 from typing import List, Dict
 import re
+import os
 
-OLLAMA_API_URL = "http://localhost:11434/api/chat"
+# Configure Gemini API
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
+else:
+    print("Warning: GOOGLE_API_KEY environment variable not set. Please set it to use Gemini Flash.")
 
-def ask_llama(message: str, history: List[Dict] = None, model: str = "llama3.2:1b") -> str:
+def ask_gemini(message: str, history: List[Dict] = None, model: str = "gemini-1.5-flash") -> str:
+    if not GOOGLE_API_KEY:
+        return "[Error] Google API key not configured. Please set GOOGLE_API_KEY environment variable."
+    
     if history is None:
         history = []
     
     # System message for detailed but concise responses
-    messages = [{"role": "system", "content": "You are a football analytics expert. Provide clear, informative explanations of football statistics and metrics. Be conversational but concise - aim for 2-3 paragraphs maximum."}] + history + [{"role": "user", "content": message}]
+    system_message = "You are a football analytics expert. Provide clear, informative explanations of football statistics and metrics. Be conversational but concise - aim for 2-3 paragraphs maximum."
     
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": False
-    }
+    # Build conversation history for Gemini
+    chat = genai.GenerativeModel(model).start_chat(history=[])
+    
+    # Add system message as first user message (Gemini doesn't have system messages like OpenAI)
+    full_message = f"{system_message}\n\nUser question: {message}"
+    
     try:
-        response = requests.post(OLLAMA_API_URL, json=payload, timeout=30)  # Longer timeout for detailed responses
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("message", {}).get("content", "")
-        else:
-            return f"[Ollama API error] {response.text}"
-    except requests.exceptions.Timeout:
-        return "[Timeout] Response took too long. Please try a simpler query."
+        response = chat.send_message(full_message)
+        return response.text
     except Exception as e:
-        return f"[Error] {str(e)}"
+        return f"[Gemini API error] {str(e)}"
 
-def classify_query_type(query: str, model: str = "llama3.2:1b") -> str:
+def classify_query_type(query: str, model: str = "gemini-1.5-flash") -> str:
+    if not GOOGLE_API_KEY:
+        return "OTHER"  # Fallback to rule-based classification
+    
     # Enhanced rule-based classification first
     query_lower = query.lower()
 
@@ -103,23 +110,12 @@ Classify this football analytics question as one of:
 Query: "{query}"
 Type (just the type, nothing else):
 """
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant that classifies football analytics questions by type. Only output the type label (COUNT, TOP_N, LIST, FILTER, OTHER)."},
-        {"role": "user", "content": prompt}
-    ]
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": False
-    }
+    
     try:
-        response = requests.post(OLLAMA_API_URL, json=payload, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            content = data.get("message", {}).get("content", "").strip().upper()
-            # Only keep the first word (in case LLM adds explanation)
-            return content.split()[0]
-        else:
-            return "OTHER"
+        model_instance = genai.GenerativeModel(model)
+        response = model_instance.generate_content(prompt)
+        content = response.text.strip().upper()
+        # Only keep the first word (in case LLM adds explanation)
+        return content.split()[0]
     except Exception as e:
         return "OTHER" 
