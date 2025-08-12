@@ -3,14 +3,12 @@ from pydantic import BaseModel
 import requests
 from football_metrics_assistant.preprocessor import preprocess_query
 from football_metrics_assistant.retriever import HybridRetriever
-from football_metrics_assistant.llm_interface import ask_llama
+from football_metrics_assistant.llm_interface import ask_gemini
 from football_metrics_assistant.tools import analyze_query, generate_player_report  # Add generate_player_report
 import time
 import numpy as np
 
 app = FastAPI()
-
-OLLAMA_API_URL = "http://localhost:11434/api/chat"
 
 # Initialize retriever (stub)
 retriever = HybridRetriever()
