@@ -454,7 +454,13 @@ class SimplifiedPreprocessor:
                 (r"over\s+(\d+)", ">"),
                 (r"above\s+(\d+)", ">"),
                 (r"below\s+(\d+)", "<"),
-                (r"age\s+(\d+)", "==")
+                (r"age\s+(\d+)", "=="),
+                (r"older\s+than\s+(\d+)\s+years?", ">"),
+                (r"(\d+)\+?\s+years?\s+old", ">"),
+                (r"more\s+than\s+(\d+)\s+years?\s+old", ">"),
+                (r"at\s+least\s+(\d+)\s+years?\s+old", ">="),
+                (r"younger\s+than\s+(\d+)\s+years?", "<"),
+                (r"less\s+than\s+(\d+)\s+years?\s+old", "<")
             ]
             
             for pattern, op in age_patterns:
@@ -474,7 +480,12 @@ class SimplifiedPreprocessor:
                 (r"at\s+least\s+(\d+)\s+minutes?", ">="),
                 (r"over\s+(\d+)\s+minutes?", ">"),
                 (r"less\s+than\s+(\d+)\s+minutes?", "<"),
-                (r"under\s+(\d+)\s+minutes?", "<")
+                (r"under\s+(\d+)\s+minutes?", "<"),
+                (r"exactly\s+(\d+)\s+minutes?", "=="),
+                (r"(\d+)\s+minutes?\s+exactly", "=="),
+                (r"(\d+)\s+minutes?\s+played", "=="),
+                (r"with\s+(\d+)\s+minutes?", "=="),
+                (r"(\d+)\s+minutes?\s+only", "==")
             ]
             
             for pattern, op in minutes_patterns:
@@ -483,6 +494,21 @@ class SimplifiedPreprocessor:
                     result["minutes_op"] = op
                     result["minutes_value"] = int(match.group(1))
                     break
+            
+            # Special case for "0 minutes" or similar patterns
+            if not result.get("minutes_op"):
+                zero_minutes_patterns = [
+                    r"0\s+minutes?",
+                    r"zero\s+minutes?",
+                    r"no\s+minutes?",
+                    r"without\s+minutes?"
+                ]
+                for pattern in zero_minutes_patterns:
+                    if self._safe_regex_search(pattern, lowered):
+                        result["minutes_op"] = "=="
+                        result["minutes_value"] = 0
+                        break
+                        
         except Exception as e:
             print(f"[ERROR] Failed to extract minutes filters: {e}")
 
